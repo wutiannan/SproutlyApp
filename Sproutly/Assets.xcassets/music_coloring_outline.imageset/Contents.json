@@ -1,0 +1,13 @@
+{
+  "images" : [
+    {
+      "filename" : "music_coloring_outline.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
