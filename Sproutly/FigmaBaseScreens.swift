@@ -4,7 +4,7 @@ import SwiftUI
 import UIKit
 
 /// 音乐1
-struct FigmaMusicView: View {
+private struct LegacyFigmaMusicView: View {
     var onGuidanceFlowChanged: (Bool) -> Void = { _ in }
 
     @EnvironmentObject private var store: GardenStore
@@ -258,7 +258,7 @@ private struct MindfulSynthesisPreset {
     }
 }
 
-private struct MindfulColorProfile {
+struct MindfulColorProfile {
     static let hueBinCount = 12
     static let empty = MindfulColorProfile(
         coloredPixels: 0,
@@ -688,8 +688,8 @@ private struct MusicColoringExperience: View {
     @StateObject private var musicPlayer = MindfulMusicPlayer()
     @State private var selectedColorIndex = 1
     @State private var selectedArtworkIndex = 0
-    @State private var coloredImages: [UIImage?] = [nil, nil, nil]
-    @State private var colorAssignments: [[UInt8: UIColor]] = [[:], [:], [:]]
+    @State private var coloredImages: [UIImage?] = [nil]
+    @State private var colorAssignments: [[UInt8: UIColor]] = [[:]]
     @State private var isPlaying = true
     @State private var stageIndex = 0
     @State private var elapsed: TimeInterval = 0
@@ -703,17 +703,9 @@ private struct MusicColoringExperience: View {
     let onClose: () -> Void
     let onComplete: () -> Void
 
-    private let outlineAssets = [
-        "music_coloring_outline",
-        "music_coloring_outline_2",
-        "music_coloring_outline_3"
-    ]
+    private let outlineAssets = ["music313_outline"]
 
-    private let regionAssets = [
-        "music_coloring_regions_1",
-        "music_coloring_regions_2",
-        "music_coloring_regions_3"
-    ]
+    private let regionAssets = ["music313_regions"]
 
     private let colors: [UIColor] = [
         UIColor(red: 0.20, green: 0.49, blue: 0.91, alpha: 1.00),
@@ -1199,7 +1191,7 @@ private struct EmotionReflectionOverlay: View {
     }
 }
 
-private struct MusicColoringPager: View {
+struct MusicColoringPager: View {
     let outlineAssets: [String]
     let regionAssets: [String]
     let selectedColor: UIColor
@@ -1208,63 +1200,24 @@ private struct MusicColoringPager: View {
     @Binding var coloredImages: [UIImage?]
     @Binding var colorAssignments: [[UInt8: UIColor]]
 
-    @GestureState private var horizontalDrag: CGFloat = 0
-
     var body: some View {
         GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                HStack(spacing: 0) {
-                    ForEach(outlineAssets.indices, id: \.self) { index in
-                        MusicColoringCanvas(
-                            outlineAsset: outlineAssets[index],
-                            coloredImage: coloredImages[index]
-                        )
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                    }
-                }
-                .offset(x: -CGFloat(selectedIndex) * proxy.size.width + horizontalDrag)
-            }
-            .frame(
-                width: proxy.size.width,
-                height: proxy.size.height,
-                alignment: .leading
+            MusicColoringCanvas(
+                outlineAsset: outlineAssets[selectedIndex],
+                coloredImage: coloredImages[selectedIndex]
             )
+            .frame(width: proxy.size.width, height: proxy.size.height)
             .contentShape(Rectangle())
-            .clipped()
             .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                    .updating($horizontalDrag) { value, state, _ in
-                        if abs(value.translation.width) > abs(value.translation.height) {
-                            state = value.translation.width
-                        }
-                    }
+                SpatialTapGesture(coordinateSpace: .local)
                     .onEnded { value in
-                        finishGesture(value, canvasSize: proxy.size)
+                        fillRegion(at: value.location, in: proxy.size)
                     }
             )
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("花朵填色画布")
-        .accessibilityHint("轻点封闭区域填色，左右滑动切换图案")
-    }
-
-    private func finishGesture(_ value: DragGesture.Value, canvasSize: CGSize) {
-        let horizontal = value.translation.width
-        let vertical = value.translation.height
-        let swipeThreshold = max(32, canvasSize.width * 0.13)
-        let isHorizontalSwipe = abs(horizontal) > swipeThreshold
-            && abs(horizontal) > abs(vertical) * 1.2
-
-        if isHorizontalSwipe {
-            let next = horizontal < 0 ? selectedIndex + 1 : selectedIndex - 1
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-                selectedIndex = min(max(next, 0), outlineAssets.count - 1)
-            }
-            return
-        }
-
-        guard hypot(horizontal, vertical) <= 12 else { return }
-        fillRegion(at: value.location, in: canvasSize)
+        .accessibilityHint("轻点蓝色线条围成的封闭区域填色")
     }
 
     private func fillRegion(at location: CGPoint, in canvasSize: CGSize) {
@@ -1284,19 +1237,17 @@ private struct MusicColoringPager: View {
         var updatedArtworkAssignments = colorAssignments
         updatedArtworkAssignments[selectedIndex] = result.assignments
         colorAssignments = updatedArtworkAssignments
-        coloredImages[selectedIndex] = result.image
-        let profiles: [MindfulColorProfile] = regionAssets.indices.compactMap {
-            index -> MindfulColorProfile? in
-            guard index < updatedArtworkAssignments.count else { return nil }
-            return MusicRegionPainter.profile(
-                regionAsset: regionAssets[index],
-                assignments: updatedArtworkAssignments[index]
-            )
-        }
+        var updatedColoredImages = coloredImages
+        updatedColoredImages[selectedIndex] = result.image
+        coloredImages = updatedColoredImages
+        let selectedProfile = MusicRegionPainter.profile(
+            regionAsset: regionAssets[selectedIndex],
+            assignments: updatedArtworkAssignments[selectedIndex]
+        ) ?? .empty
         onRegionFilled(
             selectedColor,
             result.regionFraction,
-            MindfulColorProfile.combining(profiles)
+            selectedProfile
         )
     }
 }
@@ -1317,11 +1268,10 @@ private struct MusicColoringCanvas: View {
                 .resizable()
                 .interpolation(.high)
         }
-        .allowsHitTesting(false)
     }
 }
 
-private enum MusicRegionPainter {
+enum MusicRegionPainter {
     private struct RegionMap {
         let width: Int
         let height: Int
@@ -1436,6 +1386,14 @@ private enum MusicRegionPainter {
             coolPixels: coolPixels,
             hueBins: hueBins
         )
+    }
+
+    static func image(
+        regionAsset: String,
+        assignments: [UInt8: UIColor]
+    ) -> UIImage? {
+        guard let map = regionMap(named: regionAsset) else { return nil }
+        return render(map: map, assignments: assignments)
     }
 
     private static func regionMap(named assetName: String) -> RegionMap? {
@@ -2324,7 +2282,7 @@ struct AnimatedMoodOrb: View {
     }
 }
 
-private struct AnimatedWaveform: View {
+struct AnimatedWaveform: View {
     let mood: MusicMood
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -2943,6 +2901,16 @@ struct FigmaProfileView: View {
                     }
                 }
             }
+        }
+        .onAppear {
+            guard let requested = store.requestedProfilePage else { return }
+            page = requested
+            store.requestedProfilePage = nil
+        }
+        .onChange(of: store.requestedProfilePage) { _, requested in
+            guard let requested else { return }
+            page = requested
+            store.requestedProfilePage = nil
         }
     }
 

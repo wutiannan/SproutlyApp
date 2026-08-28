@@ -70,22 +70,38 @@ enum EmotionRecordSource: String, Codable {
     case musicReflection
 }
 
+struct MusicSessionDetails: Codable, Hashable {
+    let world: String
+    let beforeMood: String
+    let afterMood: String
+    let completion: Double
+    let dominantHue: Double
+    let meanSaturation: Double
+    let warmProportion: Double
+    let artworkIndex: Int
+    let faceImageName: String?
+    let durationSeconds: Int?
+}
+
 struct EmotionRecord: Codable, Identifiable, Hashable {
     let id: UUID
     let emotion: EmotionKind
     let timestamp: Date
     let source: EmotionRecordSource
+    let musicSession: MusicSessionDetails?
 
     init(
         id: UUID = UUID(),
         emotion: EmotionKind,
         timestamp: Date = Date(),
-        source: EmotionRecordSource
+        source: EmotionRecordSource,
+        musicSession: MusicSessionDetails? = nil
     ) {
         self.id = id
         self.emotion = emotion
         self.timestamp = timestamp
         self.source = source
+        self.musicSession = musicSession
     }
 }
 
@@ -161,6 +177,7 @@ enum KakaAppearance: String, CaseIterable, Identifiable {
 @MainActor
 final class GardenStore: ObservableObject {
     @Published var selectedTab: AppTab = .garden
+    @Published var requestedProfilePage: Int?
     @Published var userName = "小芽"
     @Published var energy = 72
     @Published var coins = 286
@@ -215,7 +232,8 @@ final class GardenStore: ObservableObject {
     func recordEmotion(
         _ emotion: EmotionKind,
         source: EmotionRecordSource,
-        at timestamp: Date = Date()
+        at timestamp: Date = Date(),
+        musicSession: MusicSessionDetails? = nil
     ) {
         let alreadyRecordedToday = emotionRecords.contains {
             Calendar.current.isDate($0.timestamp, inSameDayAs: timestamp)
@@ -226,7 +244,8 @@ final class GardenStore: ObservableObject {
             EmotionRecord(
                 emotion: emotion,
                 timestamp: timestamp,
-                source: source
+                source: source,
+                musicSession: musicSession
             )
         )
         emotionRecords.sort { $0.timestamp < $1.timestamp }

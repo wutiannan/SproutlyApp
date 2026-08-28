@@ -248,13 +248,15 @@ struct MainTabView: View {
                 }
             }
 
-            if !hidesTabHotspots {
+            if !hidesTabHotspots && store.selectedTab != .mood {
                 tabButtons
             }
         }
         .ignoresSafeArea(.keyboard)
         .onChange(of: store.selectedTab) { _, selectedTab in
-            if selectedTab != .room {
+            if selectedTab == .mood {
+                hidesTabHotspots = true
+            } else if selectedTab != .room {
                 hidesTabHotspots = false
             }
         }

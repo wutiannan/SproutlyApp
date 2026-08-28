@@ -1,7 +1,6 @@
 import ARKit
 import AVFoundation
 import Combine
-import ImageIO
 import RealityKit
 import Speech
 import SwiftUI
@@ -1458,40 +1457,14 @@ private struct ARGardenContainer: UIViewRepresentable {
     func updateUIView(_ uiView: ARView, context: Context) {}
 }
 
-private enum ARAnimationAsset: String, Hashable, CaseIterable {
-    case lotus = "ar_plant_lotus"
-    case peach = "ar_plant_peach"
-
-    var canvasSize: CGSize {
-        switch self {
-        case .lotus: CGSize(width: 240, height: 320)
-        case .peach: CGSize(width: 324, height: 240)
-        }
-    }
-
-    var phaseOffset: TimeInterval {
-        let index = Self.allCases.firstIndex(of: self) ?? 0
-        return Double(index) * 0.01
-    }
-
-    // Union of all 51 transparent-frame bounds. Keeping the original canvas
-    // prevents the growing animations from jumping between frames.
-    var contentBounds: CGRect {
-        switch self {
-        case .lotus: CGRect(x: 37, y: 107, width: 182, height: 153)
-        case .peach: CGRect(x: 62, y: 0, width: 200, height: 226)
-        }
-    }
-}
-
 private enum ARPlantKind: String {
     case lotus
     case peach
 
-    var animation: ARAnimationAsset {
+    var modelName: String {
         switch self {
-        case .lotus: .lotus
-        case .peach: .peach
+        case .lotus: "ar_lotus"
+        case .peach: "ar_peach"
         }
     }
 
@@ -1501,154 +1474,14 @@ private enum ARPlantKind: String {
         case .peach: 0.36
         }
     }
-}
 
-private struct ARAnimationPlaneLayout {
-    let planeWidth: Float
-    let planeHeight: Float
-    let centerX: Float
-    let centerY: Float
-    let visibleWidth: Float
-}
-
-@MainActor
-private final class ARPlantAnimationClip {
-    let texture: TextureResource
-
-    private let data: Data
-    private let source: CGImageSource
-    private let frameDurations: [TimeInterval]
-    private let totalDuration: TimeInterval
-    private var elapsed: TimeInterval = 0
-    private var displayedFrameIndex = 0
-
-    init?(asset: ARAnimationAsset) {
-        guard
-            let dataAsset = NSDataAsset(name: asset.rawValue),
-            let imageSource = CGImageSourceCreateWithData(
-                dataAsset.data as CFData,
-                [kCGImageSourceShouldCache: false] as CFDictionary
-            ),
-            CGImageSourceGetCount(imageSource) > 0,
-            let sourceFrame = CGImageSourceCreateImageAtIndex(imageSource, 0, nil),
-            let firstFrame = Self.normalizedRGBAFrame(sourceFrame)
-        else {
-            return nil
+    var collisionSize: SIMD3<Float> {
+        switch self {
+        case .lotus:
+            SIMD3(0.232, visibleHeight, 0.246)
+        case .peach:
+            SIMD3(0.267, visibleHeight, 0.261)
         }
-
-        let frameCount = CGImageSourceGetCount(imageSource)
-        let durations = (0..<frameCount).map { index in
-            Self.frameDuration(source: imageSource, index: index)
-        }
-        let options = TextureResource.CreateOptions(
-            semantic: .color,
-            mipmapsMode: .none
-        )
-
-        guard let generatedTexture = try? TextureResource.generate(
-            from: firstFrame,
-            withName: asset.rawValue,
-            options: options
-        ) else {
-            return nil
-        }
-
-        data = dataAsset.data
-        source = imageSource
-        frameDurations = durations
-        totalDuration = max(durations.reduce(0, +), 0.1)
-        elapsed = asset.phaseOffset.truncatingRemainder(dividingBy: totalDuration)
-        texture = generatedTexture
-    }
-
-    func layout(asset: ARAnimationAsset, visibleHeight: Float) -> ARAnimationPlaneLayout {
-        let canvas = asset.canvasSize
-        let bounds = asset.contentBounds
-        let planeHeight = visibleHeight * Float(canvas.height / bounds.height)
-        let planeWidth = planeHeight * Float(canvas.width / canvas.height)
-        let centerX = Float(0.5 - bounds.midX / canvas.width) * planeWidth
-        let centerY = Float(bounds.maxY / canvas.height - 0.5) * planeHeight
-        let visibleWidth = visibleHeight * Float(bounds.width / bounds.height)
-
-        return ARAnimationPlaneLayout(
-            planeWidth: planeWidth,
-            planeHeight: planeHeight,
-            centerX: centerX,
-            centerY: centerY,
-            visibleWidth: visibleWidth
-        )
-    }
-
-    func advance(by deltaTime: TimeInterval) {
-        guard frameDurations.count > 1 else { return }
-
-        elapsed = (elapsed + deltaTime).truncatingRemainder(dividingBy: totalDuration)
-        var frameIndex = 0
-        var cursor: TimeInterval = 0
-
-        for duration in frameDurations {
-            if elapsed < cursor + duration { break }
-            cursor += duration
-            frameIndex += 1
-        }
-        frameIndex = min(frameIndex, frameDurations.count - 1)
-        guard frameIndex != displayedFrameIndex else { return }
-        guard
-            let sourceFrame = CGImageSourceCreateImageAtIndex(source, frameIndex, nil),
-            let frame = Self.normalizedRGBAFrame(sourceFrame)
-        else {
-            return
-        }
-
-        let options = TextureResource.CreateOptions(
-            semantic: .color,
-            mipmapsMode: .none
-        )
-        do {
-            try texture.replace(withImage: frame, options: options)
-            displayedFrameIndex = frameIndex
-        } catch {
-            // Keep the last valid frame; the next update can retry.
-        }
-    }
-
-    private static func frameDuration(source: CGImageSource, index: Int) -> TimeInterval {
-        guard
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil)
-                as? [CFString: Any],
-            let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any]
-        else {
-            return 0.1
-        }
-
-        let unclamped = (gif[kCGImagePropertyGIFUnclampedDelayTime] as? NSNumber)?.doubleValue
-        let clamped = (gif[kCGImagePropertyGIFDelayTime] as? NSNumber)?.doubleValue
-        return max(unclamped ?? clamped ?? 0.1, 0.06)
-    }
-
-    private static func normalizedRGBAFrame(_ image: CGImage) -> CGImage? {
-        let width = image.width
-        let height = image.height
-        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue |
-            CGImageAlphaInfo.premultipliedLast.rawValue
-
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: width * 4,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo
-        ) else {
-            return nil
-        }
-
-        context.clear(CGRect(x: 0, y: 0, width: width, height: height))
-        context.interpolationQuality = .none
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return context.makeImage()
     }
 }
 
@@ -1658,12 +1491,10 @@ private final class ARGardenScene: NSObject, ObservableObject, ARSessionDelegate
     private var rewardAnchors: [ARPlantKind: AnchorEntity] = [:]
     private var rewardRoots: [ARPlantKind: ModelEntity] = [:]
     private var plantRoots: [ModelEntity] = []
-    private var rootAnimationAssets: [ObjectIdentifier: Set<ARAnimationAsset>] = [:]
-    private var animationAssetUseCounts: [ARAnimationAsset: Int] = [:]
     private var plantGestures: [UIGestureRecognizer] = []
-    private var clips: [ARAnimationAsset: ARPlantAnimationClip] = [:]
     private var updateSubscription: (any Cancellable)?
     private var isEditingGarden = false
+    private var hasPlacedDraggablePlant = false
     private var reactsToSound = false
     private var soundPhase: TimeInterval = 0
 
@@ -1676,6 +1507,7 @@ private final class ARGardenScene: NSObject, ObservableObject, ARSessionDelegate
 
         arView = view
         view.automaticallyConfigureSession = false
+        view.environment.lighting.intensityExponent = 0.12
         view.session.delegate = self
         runSession(on: view)
 
@@ -1697,6 +1529,8 @@ private final class ARGardenScene: NSObject, ObservableObject, ARSessionDelegate
 
         let configuration = ARWorldTrackingConfiguration()
         configuration.planeDetection = [.horizontal, .vertical]
+        configuration.isLightEstimationEnabled = true
+        configuration.environmentTexturing = .automatic
         view.session.run(configuration)
     }
 
@@ -1709,7 +1543,7 @@ private final class ARGardenScene: NSObject, ObservableObject, ARSessionDelegate
         Array(rewardRoots.values).forEach(removePlantRoot)
         rewardAnchors.removeAll()
         rewardRoots.removeAll()
-        clips.removeAll()
+        hasPlacedDraggablePlant = false
         reinstallPlantGestures()
     }
 
@@ -1726,7 +1560,7 @@ private final class ARGardenScene: NSObject, ObservableObject, ARSessionDelegate
             alignment: .any,
             fallbackOffset: SIMD3(0, -0.22, -0.8)
         ) else { return false }
-        guard let root = makeAnimatedPlant(kind: kind) else { return false }
+        guard let root = makeModelPlant(kind: kind) else { return false }
 
         let anchor = AnchorEntity(world: transform)
         anchor.addChild(root)
@@ -1739,6 +1573,7 @@ private final class ARGardenScene: NSObject, ObservableObject, ARSessionDelegate
         arView.scene.addAnchor(anchor)
         rewardAnchors[kind] = anchor
         rewardRoots[kind] = root
+        hasPlacedDraggablePlant = true
         reinstallPlantGestures()
         return true
     }
@@ -1746,94 +1581,40 @@ private final class ARGardenScene: NSObject, ObservableObject, ARSessionDelegate
     func setGardenInteraction(isEditing: Bool, reactsToSound: Bool) {
         isEditingGarden = isEditing
         self.reactsToSound = reactsToSound
-        plantGestures.forEach { $0.isEnabled = isEditing }
+        plantGestures.forEach {
+            $0.isEnabled = isEditing || hasPlacedDraggablePlant
+        }
 
         if !reactsToSound {
             plantRoots.forEach { $0.scale = SIMD3(repeating: 1) }
         }
     }
 
-    private func makeAnimatedPlant(kind: ARPlantKind) -> ModelEntity? {
-        guard
-            let flowerClip = clip(for: kind.animation),
-            let flowerPlane = makeAnimatedPlane(
-                asset: kind.animation,
-                clip: flowerClip,
-                visibleHeight: kind.visibleHeight
-            )
-        else {
-            return nil
-        }
-
+    private func makeModelPlant(kind: ARPlantKind) -> ModelEntity? {
+        guard let model = try? Entity.load(named: kind.modelName) else { return nil }
         let root = ModelEntity()
-        root.name = "animated-plant-\(kind.rawValue)"
+        root.name = "model-plant-\(kind.rawValue)"
 
-        root.addChild(flowerPlane.entity)
+        model.scale = SIMD3(repeating: kind.visibleHeight)
+        root.addChild(model)
         root.collision = CollisionComponent(
             shapes: [
                 ShapeResource.generateBox(
-                    size: SIMD3(flowerPlane.visibleWidth, kind.visibleHeight, 0.035)
+                    size: kind.collisionSize
                 )
                 .offsetBy(translation: SIMD3(0, kind.visibleHeight / 2, 0))
             ]
         )
-        registerPlantRoot(root, animationAssets: [kind.animation])
+        registerPlantRoot(root)
         return root
     }
 
-    private func registerPlantRoot(
-        _ root: ModelEntity,
-        animationAssets: Set<ARAnimationAsset>
-    ) {
+    private func registerPlantRoot(_ root: ModelEntity) {
         plantRoots.append(root)
-        rootAnimationAssets[ObjectIdentifier(root)] = animationAssets
-        for asset in animationAssets {
-            animationAssetUseCounts[asset, default: 0] += 1
-        }
     }
 
     private func removePlantRoot(_ root: ModelEntity) {
         plantRoots.removeAll { $0 === root }
-        guard let assets = rootAnimationAssets.removeValue(
-            forKey: ObjectIdentifier(root)
-        ) else { return }
-
-        for asset in assets {
-            let remainingUses = max(0, animationAssetUseCounts[asset, default: 0] - 1)
-            if remainingUses == 0 {
-                animationAssetUseCounts.removeValue(forKey: asset)
-            } else {
-                animationAssetUseCounts[asset] = remainingUses
-            }
-        }
-    }
-
-    private func makeAnimatedPlane(
-        asset: ARAnimationAsset,
-        clip: ARPlantAnimationClip,
-        visibleHeight: Float
-    ) -> (entity: ModelEntity, visibleWidth: Float)? {
-        let layout = clip.layout(asset: asset, visibleHeight: visibleHeight)
-        var material = UnlitMaterial()
-        material.color = .init(
-            tint: .white,
-            texture: .init(clip.texture)
-        )
-        material.blending = .transparent(opacity: .init(scale: 1))
-
-        let entity = ModelEntity(
-            mesh: .generatePlane(width: layout.planeWidth, height: layout.planeHeight),
-            materials: [material]
-        )
-        entity.position = SIMD3(layout.centerX, layout.centerY, 0)
-        return (entity, layout.visibleWidth)
-    }
-
-    private func clip(for asset: ARAnimationAsset) -> ARPlantAnimationClip? {
-        if let clip = clips[asset] { return clip }
-        guard let clip = ARPlantAnimationClip(asset: asset) else { return nil }
-        clips[asset] = clip
-        return clip
     }
 
     private func placementTransform(
@@ -1880,7 +1661,7 @@ private final class ARGardenScene: NSObject, ObservableObject, ARSessionDelegate
     private func installGesture(for root: ModelEntity, in view: ARView) {
         let installed = view.installGestures(.translation, for: root)
         for gesture in installed {
-            gesture.isEnabled = isEditingGarden
+            gesture.isEnabled = isEditingGarden || hasPlacedDraggablePlant
             plantGestures.append(gesture as UIGestureRecognizer)
         }
     }
@@ -1889,40 +1670,14 @@ private final class ARGardenScene: NSObject, ObservableObject, ARSessionDelegate
         updateSubscription?.cancel()
         updateSubscription = view.scene.subscribe(to: SceneEvents.Update.self) { [weak self] event in
             guard let self else { return }
-            for (asset, clip) in self.clips
-            where self.animationAssetUseCounts[asset, default: 0] > 0 {
-                clip.advance(by: event.deltaTime)
-            }
-            self.updatePlantFacingAndSound(deltaTime: event.deltaTime)
+            self.updatePlantSoundResponse(deltaTime: event.deltaTime)
         }
     }
 
-    private func updatePlantFacingAndSound(deltaTime: TimeInterval) {
-        guard
-            let cameraTransform = arView?.session.currentFrame?.camera.transform
-        else { return }
-
+    private func updatePlantSoundResponse(deltaTime: TimeInterval) {
         soundPhase += deltaTime
-        let cameraPosition = SIMD3<Float>(
-            cameraTransform.columns.3.x,
-            cameraTransform.columns.3.y,
-            cameraTransform.columns.3.z
-        )
 
         for (index, root) in plantRoots.enumerated() {
-            let position = root.position(relativeTo: nil)
-            let horizontalDirection = SIMD2(
-                cameraPosition.x - position.x,
-                cameraPosition.z - position.z
-            )
-            if simd_length_squared(horizontalDirection) > 0.0001 {
-                let yaw = atan2(horizontalDirection.x, horizontalDirection.y)
-                root.orientation = simd_quatf(
-                    angle: yaw,
-                    axis: SIMD3(0, 1, 0)
-                )
-            }
-
             let pulse = reactsToSound
                 ? Float(1 + sin(soundPhase * 4.2 + Double(index) * 0.7) * 0.035)
                 : 1

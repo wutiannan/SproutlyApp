@@ -1,0 +1,13 @@
+{
+  "images" : [
+    {
+      "filename" : "music_artwork_action_arrow.svg",
+      "idiom" : "universal",
+      "scale" : "1x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

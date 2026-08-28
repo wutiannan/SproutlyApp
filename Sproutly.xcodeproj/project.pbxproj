@@ -18,6 +18,14 @@
 		A10000000000000000000012 /* LiveARView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* LiveARView.swift */; };
 		A10000000000000000000013 /* ZQKNNY-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* ZQKNNY-Medium.ttf */; };
 		A10000000000000000000014 /* ZQKNNY-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* ZQKNNY-Bold.ttf */; };
+		A10000000000000000000015 /* ar_peach.usdz in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* ar_peach.usdz */; };
+		A10000000000000000000016 /* ar_lotus.usdz in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* ar_lotus.usdz */; };
+		A10000000000000000000017 /* SproutlyMusicFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* SproutlyMusicFlow.swift */; };
+		A10000000000000000000018 /* music_fallback_happy.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000019 /* music_fallback_happy.wav */; };
+		A10000000000000000000019 /* music_fallback_calm.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* music_fallback_calm.wav */; };
+		A10000000000000000000020 /* music_fallback_low.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000021 /* music_fallback_low.wav */; };
+		A10000000000000000000021 /* music_fallback_angry.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000022 /* music_fallback_angry.wav */; };
+		A10000000000000000000022 /* music_fallback_tense.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000023 /* music_fallback_tense.wav */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +42,14 @@
 		B10000000000000000000013 /* ZQKNNY-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "ZQKNNY-Medium.ttf"; sourceTree = "<group>"; };
 		B10000000000000000000014 /* ZQKNNY-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "ZQKNNY-Bold.ttf"; sourceTree = "<group>"; };
 		B10000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B10000000000000000000016 /* ar_peach.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = ar_peach.usdz; sourceTree = "<group>"; };
+		B10000000000000000000017 /* ar_lotus.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = ar_lotus.usdz; sourceTree = "<group>"; };
+		B10000000000000000000018 /* SproutlyMusicFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SproutlyMusicFlow.swift; sourceTree = "<group>"; };
+		B10000000000000000000019 /* music_fallback_happy.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_happy.wav; sourceTree = "<group>"; };
+		B10000000000000000000020 /* music_fallback_calm.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_calm.wav; sourceTree = "<group>"; };
+		B10000000000000000000021 /* music_fallback_low.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_low.wav; sourceTree = "<group>"; };
+		B10000000000000000000022 /* music_fallback_angry.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_angry.wav; sourceTree = "<group>"; };
+		B10000000000000000000023 /* music_fallback_tense.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_tense.wav; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,10 +80,13 @@
 				B10000000000000000000004 /* RootView.swift */,
 				B10000000000000000000005 /* GardenHomeView.swift */,
 				B10000000000000000000011 /* FigmaBaseScreens.swift */,
+				B10000000000000000000018 /* SproutlyMusicFlow.swift */,
 				B10000000000000000000012 /* LiveARView.swift */,
 				B10000000000000000000009 /* PreviewCatalog.swift */,
 				B10000000000000000000015 /* Info.plist */,
 				C10000000000000000000004 /* Fonts */,
+				C10000000000000000000005 /* ARModels */,
+				C10000000000000000000006 /* Audio */,
 				B10000000000000000000007 /* Assets.xcassets */,
 			);
 			path = Sproutly;
@@ -88,6 +107,27 @@
 				B10000000000000000000014 /* ZQKNNY-Bold.ttf */,
 			);
 			path = Fonts;
+			sourceTree = "<group>";
+		};
+		C10000000000000000000005 /* ARModels */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000016 /* ar_peach.usdz */,
+				B10000000000000000000017 /* ar_lotus.usdz */,
+			);
+			path = ARModels;
+			sourceTree = "<group>";
+		};
+		C10000000000000000000006 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000019 /* music_fallback_happy.wav */,
+				B10000000000000000000020 /* music_fallback_calm.wav */,
+				B10000000000000000000021 /* music_fallback_low.wav */,
+				B10000000000000000000022 /* music_fallback_angry.wav */,
+				B10000000000000000000023 /* music_fallback_tense.wav */,
+			);
+			path = Audio;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -152,6 +192,13 @@
 				A10000000000000000000007 /* Assets.xcassets in Resources */,
 				A10000000000000000000013 /* ZQKNNY-Medium.ttf in Resources */,
 				A10000000000000000000014 /* ZQKNNY-Bold.ttf in Resources */,
+				A10000000000000000000015 /* ar_peach.usdz in Resources */,
+				A10000000000000000000016 /* ar_lotus.usdz in Resources */,
+				A10000000000000000000018 /* music_fallback_happy.wav in Resources */,
+				A10000000000000000000019 /* music_fallback_calm.wav in Resources */,
+				A10000000000000000000020 /* music_fallback_low.wav in Resources */,
+				A10000000000000000000021 /* music_fallback_angry.wav in Resources */,
+				A10000000000000000000022 /* music_fallback_tense.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -168,6 +215,7 @@
 				A10000000000000000000004 /* RootView.swift in Sources */,
 				A10000000000000000000005 /* GardenHomeView.swift in Sources */,
 				A10000000000000000000011 /* FigmaBaseScreens.swift in Sources */,
+				A10000000000000000000017 /* SproutlyMusicFlow.swift in Sources */,
 				A10000000000000000000012 /* LiveARView.swift in Sources */,
 				A10000000000000000000009 /* PreviewCatalog.swift in Sources */,
 			);
