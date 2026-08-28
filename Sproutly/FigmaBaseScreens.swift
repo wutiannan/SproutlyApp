@@ -1196,9 +1196,30 @@ struct MusicColoringPager: View {
     let regionAssets: [String]
     let selectedColor: UIColor
     let onRegionFilled: (UIColor, CGFloat, MindfulColorProfile) -> Void
+    let onCanvasTapped: () -> Void
     @Binding var selectedIndex: Int
     @Binding var coloredImages: [UIImage?]
     @Binding var colorAssignments: [[UInt8: UIColor]]
+
+    init(
+        outlineAssets: [String],
+        regionAssets: [String],
+        selectedColor: UIColor,
+        onRegionFilled: @escaping (UIColor, CGFloat, MindfulColorProfile) -> Void,
+        onCanvasTapped: @escaping () -> Void = {},
+        selectedIndex: Binding<Int>,
+        coloredImages: Binding<[UIImage?]>,
+        colorAssignments: Binding<[[UInt8: UIColor]]>
+    ) {
+        self.outlineAssets = outlineAssets
+        self.regionAssets = regionAssets
+        self.selectedColor = selectedColor
+        self.onRegionFilled = onRegionFilled
+        self.onCanvasTapped = onCanvasTapped
+        _selectedIndex = selectedIndex
+        _coloredImages = coloredImages
+        _colorAssignments = colorAssignments
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -1211,6 +1232,7 @@ struct MusicColoringPager: View {
             .gesture(
                 SpatialTapGesture(coordinateSpace: .local)
                     .onEnded { value in
+                        onCanvasTapped()
                         fillRegion(at: value.location, in: proxy.size)
                     }
             )
@@ -2232,28 +2254,13 @@ private struct MusicMotionHeader: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Ellipse()
-                .fill(Color(red: 0.45, green: 0.63, blue: 0.82).opacity(0.22))
-                .frame(width: 206 * scale, height: 28 * scale)
-                .blur(radius: 22 * scale)
-                .position(x: 201 * scale, y: 409 * scale)
             AnimatedMoodOrb(asset: orbAsset, frameDuration: mood.orbFrameDuration)
                 .frame(width: 226 * scale, height: 226 * scale)
-                .shadow(
-                    color: Color(red: 0.45, green: 0.63, blue: 0.82).opacity(0.24),
-                    radius: 28 * scale,
-                    y: 12 * scale
-                )
                 .position(x: 201 * scale, y: 295 * scale)
                 .id(orbAsset)
                 .transaction { transaction in
                     transaction.animation = nil
                 }
-            Circle()
-                .strokeBorder(Color.white, lineWidth: 16 * scale)
-                .frame(width: 226 * scale, height: 226 * scale)
-                .blur(radius: 1.6 * scale)
-                .position(x: 201 * scale, y: 295 * scale)
             AnimatedWaveform(mood: mood)
                 .frame(
                     width: (spansFullWidth ? 402 : 244) * scale,

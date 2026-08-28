@@ -40,6 +40,7 @@ struct FigmaMusicView: View {
     @State private var elapsedSeconds = 0
     @State private var showsSaveConfirmation = false
     @State private var pendingSessionDetails: MusicSessionDetails?
+    @State private var showsColoringGuide = true
 
     private let outlineAssets = ["music313_outline"]
     private let regionAssets = ["music313_regions"]
@@ -224,6 +225,7 @@ struct FigmaMusicView: View {
         sessionCompletedAt = nil
         elapsedSeconds = 0
         pendingSessionDetails = nil
+        showsColoringGuide = true
         move(to: .world)
     }
 
@@ -321,6 +323,16 @@ private enum MusicWorld: Int, CaseIterable, Identifiable, Hashable {
         case .happy: "快乐"
         case .calm: "平静"
         case .low: "低落"
+        case .angry: "生气"
+        case .tense: "紧张"
+        }
+    }
+
+    var checkInTitle: String {
+        switch self {
+        case .happy: "开心"
+        case .calm: "平静"
+        case .low: "难过"
         case .angry: "生气"
         case .tense: "紧张"
         }
@@ -488,21 +500,12 @@ private extension FigmaMusicView {
             .position(x: 48 * scale, y: 84 * scale)
             .accessibilityLabel("返回首页")
 
-            ZStack {
-                AnimatedMoodOrb(
-                    asset: selectedWorld.orbAsset,
-                    frameDuration: selectedWorld.motionMood.orbFrameDuration
-                )
-                .id(selectedWorld.orbAsset)
-                .transaction { transaction in
-                    // Figma 中切换的是情绪球组件本身；同一情绪内部才循环其四个同色系状态。
-                    transaction.animation = nil
-                }
-                Circle()
-                    .strokeBorder(.white, lineWidth: 15 * scale)
-                    .blur(radius: 1.5 * scale)
-            }
-            .frame(width: 224 * scale, height: 224 * scale)
+            MusicInteractiveMoodOrb(
+                world: selectedWorld,
+                orbSize: 224 * scale,
+                particleReach: 50 * scale
+            )
+            .frame(width: 324 * scale, height: 324 * scale)
             .position(x: 201 * scale, y: 307 * scale)
             .accessibilityLabel("\(selectedWorld.title)情绪球")
 
@@ -543,6 +546,13 @@ private extension FigmaMusicView {
         .simultaneousGesture(
             DragGesture(minimumDistance: 28)
                 .onEnded { value in
+                    let orbCenter = CGPoint(x: 201 * scale, y: 307 * scale)
+                    let startDistance = hypot(
+                        value.startLocation.x - orbCenter.x,
+                        value.startLocation.y - orbCenter.y
+                    )
+                    // 球内拖动专用于粒子探索；只有从球外开始的横向手势才切换音乐世界。
+                    guard startDistance > 112 * scale else { return }
                     guard abs(value.translation.width) > abs(value.translation.height) * 1.3,
                           abs(value.translation.width) > 52 * scale else { return }
                     cycleWorld(by: value.translation.width < 0 ? 1 : -1)
@@ -568,6 +578,7 @@ private extension FigmaMusicView {
                 regionAssets: regionAssets,
                 selectedColor: palette[selectedColorIndex],
                 onRegionFilled: handleRegionFilled,
+                onCanvasTapped: dismissColoringGuide,
                 selectedIndex: $selectedArtworkIndex,
                 coloredImages: $coloredImages,
                 colorAssignments: $colorAssignments
@@ -575,6 +586,8 @@ private extension FigmaMusicView {
             .frame(width: 337.48 * scale, height: 488.41 * scale)
             .clipShape(RoundedRectangle(cornerRadius: 20 * scale, style: .continuous))
             .position(x: 201 * scale, y: 379.34 * scale)
+
+            coloringKakaGuide(scale: scale)
 
             Button {
                 move(to: .world)
@@ -1061,7 +1074,42 @@ private extension FigmaMusicView {
                 guard let mood = selection.wrappedValue else { return }
                 completeEmotionSelection(mood)
             }
+
+            emotionKakaGuide(
+                selection: selection.wrappedValue,
+                scale: scale
+            )
         }
+    }
+
+    private func emotionKakaGuide(
+        selection: MusicWorld?,
+        scale: CGFloat
+    ) -> some View {
+        ZStack {
+            Image("music_coloring_guide_bubble")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 266.252 * scale, height: 89.4 * scale)
+                .position(x: 199.34 * scale, y: 148.57 * scale)
+
+            Text(
+                selection.map { "你现在的心情是\($0.checkInTitle)" }
+                    ?? "点一点，选出你的现在的心情~"
+            )
+            .gardenFont(size: 14 * scale)
+            .tracking(0.812 * scale)
+            .foregroundStyle(Color(red: 0, green: 80 / 255, blue: 86 / 255))
+            .multilineTextAlignment(.center)
+            .frame(width: 222 * scale, height: 59 * scale)
+            .position(x: 200.24 * scale, y: 145.57 * scale)
+
+            KakaAvatarView(magnification: 1.42)
+                .frame(width: 134.861 * scale, height: 88.425 * scale)
+                .position(x: 366.10 * scale, y: 205.193 * scale)
+        }
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
     }
 
     func coloringScreen(scale: CGFloat) -> some View {
@@ -1082,6 +1130,7 @@ private extension FigmaMusicView {
                 regionAssets: regionAssets,
                 selectedColor: palette[selectedColorIndex],
                 onRegionFilled: handleRegionFilled,
+                onCanvasTapped: dismissColoringGuide,
                 selectedIndex: $selectedArtworkIndex,
                 coloredImages: $coloredImages,
                 colorAssignments: $colorAssignments
@@ -1089,6 +1138,8 @@ private extension FigmaMusicView {
             .frame(width: 337.48 * scale, height: 488.41 * scale)
             .clipShape(RoundedRectangle(cornerRadius: 20 * scale, style: .continuous))
             .position(x: 201 * scale, y: 379.34 * scale)
+
+            coloringKakaGuide(scale: scale)
 
             Button {
                 saveDraft()
@@ -1136,6 +1187,43 @@ private extension FigmaMusicView {
             .position(x: 315.16 * scale, y: 809 * scale)
             .accessibilityHint("当前已完成 \(Int(completion * 100))%，达到百分之七十后可继续")
         }
+    }
+
+    @ViewBuilder
+    private func coloringKakaGuide(scale: CGFloat) -> some View {
+        if showsColoringGuide {
+            Image("music_coloring_guide_bubble")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 266.252 * scale, height: 89.4 * scale)
+                .position(x: 149.966 * scale, y: 537.24 * scale)
+                .allowsHitTesting(false)
+
+            Text("请点一点颜色，然后在框中填色哦~")
+                .gardenFont(size: 14 * scale)
+                .tracking(0.812 * scale)
+                .foregroundStyle(Color(red: 0, green: 80 / 255, blue: 86 / 255))
+                .multilineTextAlignment(.center)
+                .frame(width: 237.541 * scale, height: 59 * scale)
+                .position(x: 151.03 * scale, y: 534.24 * scale)
+                .allowsHitTesting(false)
+
+            KakaAvatarView(magnification: 1.42)
+                .frame(width: 185.786 * scale, height: 121.816 * scale)
+                .position(x: 309.103 * scale, y: 610.818 * scale)
+                .allowsHitTesting(false)
+        } else {
+            KakaAvatarView(magnification: 1.24)
+                .frame(width: 113.647 * scale, height: 74.516 * scale)
+                .rotationEffect(.degrees(8.19))
+                .position(x: 346.004 * scale, y: 107.997 * scale)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func dismissColoringGuide() {
+        guard showsColoringGuide else { return }
+        showsColoringGuide = false
     }
 
     private func handleRegionFilled(
@@ -1506,6 +1594,823 @@ private struct MusicRoundButton: View {
                 .overlay(Circle().stroke(.white.opacity(0.24), lineWidth: scale))
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct MusicInteractiveMoodOrb: View {
+    let world: MusicWorld
+    let orbSize: CGFloat
+    let particleReach: CGFloat
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var particles: [MusicMoodParticle] = []
+    @State private var orbBodyParticles: [MusicOrbBodyParticle] = []
+    @State private var ripples: [MusicMoodRipple] = []
+    @State private var chargeProgress: CGFloat = 0
+    @State private var dissolveProgress: CGFloat = 0
+    @State private var isTouching = false
+    @State private var isTouchingCenter = false
+    @State private var touchLocation = CGPoint.zero
+    @State private var touchStartedAt: TimeInterval = 0
+    @State private var lastTouchUpdateAt: TimeInterval = 0
+    @State private var lastTouchLocation = CGPoint.zero
+    @State private var lastRippleAt: TimeInterval = 0
+    @State private var fingerSpeed: CGFloat = 0
+    @State private var emissionTick = 0
+    @State private var emissionTask: Task<Void, Never>?
+    @State private var burstTask: Task<Void, Never>?
+
+    private var fieldSize: CGFloat {
+        orbSize + particleReach * 2
+    }
+
+    private var scale: CGFloat {
+        orbSize / 224
+    }
+
+    var body: some View {
+        ZStack {
+            orbSurface
+                .frame(width: orbSize, height: orbSize)
+
+            particleField
+                .frame(width: fieldSize, height: fieldSize)
+                .allowsHitTesting(false)
+
+            Circle()
+                .fill(.white.opacity(0.001))
+                .frame(width: orbSize, height: orbSize)
+                .contentShape(Circle())
+                .gesture(orbGesture)
+        }
+        .frame(width: fieldSize, height: fieldSize)
+        .onChange(of: world) { _, _ in
+            resetInteraction(clearParticles: true)
+        }
+        .onChange(of: reduceMotion) { _, isEnabled in
+            guard isEnabled else { return }
+            resetInteraction(clearParticles: true)
+        }
+        .onDisappear {
+            resetInteraction(clearParticles: true)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(world.title)动态情绪球")
+        .accessibilityHint("触摸或拖动可以观察情绪粒子")
+    }
+
+    private var orbSurface: some View {
+        ZStack {
+            AnimatedMoodOrb(
+                asset: world.orbAsset,
+                frameDuration: world.motionMood.orbFrameDuration
+            )
+            .id(world.orbAsset)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+            .opacity(max(1 - dissolveProgress * 1.08, 0))
+            .scaleEffect(1 - chargeProgress * 0.24)
+            .blur(radius: dissolveProgress * 1.2 * scale)
+            .animation(
+                .timingCurve(0.16, 0.84, 0.24, 1, duration: isTouching ? 0.30 : 0.58),
+                value: dissolveProgress
+            )
+            .animation(
+                .timingCurve(0.22, 0.78, 0.28, 1, duration: isTouching ? 0.14 : 0.58),
+                value: chargeProgress
+            )
+
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.black.opacity(reduceMotion ? 0 : 0.13),
+                            Color.black.opacity(reduceMotion ? 0 : 0.035),
+                            .clear
+                        ],
+                        center: touchGradientCenter,
+                        startRadius: 0,
+                        endRadius: 42 * scale
+                    )
+                )
+                .blendMode(.multiply)
+                .opacity(isTouching ? max(1 - dissolveProgress, 0) : 0)
+                .animation(
+                    .easeOut(duration: isTouching ? 0.08 : 0.35),
+                    value: isTouching
+                )
+        }
+    }
+
+    private var touchGradientCenter: UnitPoint {
+        UnitPoint(
+            x: min(max(touchLocation.x / max(orbSize, 1), 0), 1),
+            y: min(max(touchLocation.y / max(orbSize, 1), 0), 1)
+        )
+    }
+
+    private var particleField: some View {
+        TimelineView(
+            .animation(
+                minimumInterval: reduceMotion ? 1 / 15 : 1 / 60,
+                paused: !isTouching
+                    && particles.isEmpty
+                    && orbBodyParticles.isEmpty
+                    && ripples.isEmpty
+            )
+        ) { timeline in
+            Canvas { context, _ in
+                let now = timeline.date.timeIntervalSinceReferenceDate
+                drawOrbBodyParticles(context: &context, at: now)
+                drawParticles(context: &context, at: now)
+                drawRipples(context: &context, at: now)
+                drawTouchIndicator(context: &context, at: now)
+            }
+        }
+    }
+
+    private var orbGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { value in
+                updateTouch(at: value.location)
+            }
+            .onEnded { _ in
+                endInteraction()
+            }
+    }
+
+    private func updateTouch(at location: CGPoint) {
+        let now = Date().timeIntervalSinceReferenceDate
+        let center = CGPoint(x: orbSize / 2, y: orbSize / 2)
+        let distance = hypot(location.x - center.x, location.y - center.y)
+
+        guard distance <= orbSize / 2 else {
+            endInteraction()
+            return
+        }
+
+        let touchesCenter = distance <= orbSize * 0.20
+        touchLocation = location
+
+        if !isTouching {
+            beginInteraction(at: location, isCenter: touchesCenter, now: now)
+            return
+        }
+
+        let elapsed = max(now - lastTouchUpdateAt, 1 / 120)
+        let travelled = hypot(
+            location.x - lastTouchLocation.x,
+            location.y - lastTouchLocation.y
+        )
+        let instantaneousSpeed = travelled / elapsed
+        fingerSpeed = fingerSpeed * 0.62 + instantaneousSpeed * 0.38
+        lastTouchLocation = location
+        lastTouchUpdateAt = now
+
+        if touchesCenter != isTouchingCenter {
+            isTouchingCenter = touchesCenter
+            triggerSoftHaptic()
+            if touchesCenter {
+                appendCenterRipple(at: now)
+            }
+        }
+    }
+
+    private func beginInteraction(
+        at location: CGPoint,
+        isCenter: Bool,
+        now: TimeInterval
+    ) {
+        isTouching = true
+        isTouchingCenter = isCenter
+        touchStartedAt = now
+        lastTouchUpdateAt = now
+        lastTouchLocation = location
+        lastRippleAt = now
+        fingerSpeed = 0
+        emissionTick = 0
+        triggerSoftHaptic()
+
+        if !reduceMotion {
+            beginOrbDissolve(at: now)
+        }
+
+        if isCenter {
+            appendCenterRipple(at: now)
+        }
+
+        guard !reduceMotion else { return }
+        startEmissionLoop()
+    }
+
+    private func startEmissionLoop() {
+        emissionTask?.cancel()
+        emissionTask = Task { @MainActor in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .milliseconds(33))
+                } catch {
+                    break
+                }
+                guard isTouching else { break }
+                emitParticles(at: Date().timeIntervalSinceReferenceDate)
+            }
+        }
+    }
+
+    @MainActor
+    private func emitParticles(at now: TimeInterval) {
+        particles.removeAll { now - $0.bornAt >= $0.lifetime }
+        ripples.removeAll { now - $0.bornAt >= $0.lifetime }
+
+        emissionTick += 1
+        fingerSpeed *= 0.88
+
+        if isTouchingCenter, now - lastRippleAt >= 1.2 {
+            appendCenterRipple(at: now)
+        }
+
+        let profile = world.particleMotionProfile
+        guard emissionTick % profile.emissionCadence == 0 else { return }
+
+        let holdProgress = min(max((now - touchStartedAt) / 1.2, 0), 1)
+        let speedProgress = min(fingerSpeed / max(520 * scale, 1), 1)
+        let intensity = min(0.34 + holdProgress * 0.40 + speedProgress * 0.30, 1)
+        let count = intensity > 0.76 ? 3 : (intensity > 0.46 ? 2 : 1)
+
+        for _ in 0..<count {
+            particles.append(makeParticle(at: now, intensity: CGFloat(intensity)))
+        }
+
+        if particles.count > 140 {
+            particles.removeFirst(particles.count - 140)
+        }
+    }
+
+    private func makeParticle(
+        at now: TimeInterval,
+        intensity: CGFloat
+    ) -> MusicMoodParticle {
+        let orbCenter = CGPoint(x: orbSize / 2, y: orbSize / 2)
+        let touchVector = CGVector(
+            dx: touchLocation.x - orbCenter.x,
+            dy: touchLocation.y - orbCenter.y
+        )
+        let profile = world.particleMotionProfile
+
+        let baseAngle: CGFloat
+        if isTouchingCenter {
+            baseAngle = .random(in: 0...(2 * .pi))
+        } else {
+            baseAngle = atan2(touchVector.dy, touchVector.dx)
+        }
+        let angle = baseAngle + CGFloat.random(in: -profile.angularSpread...profile.angularSpread)
+        let generatorAngle = CGFloat.random(in: 0...(2 * .pi))
+        let generatorRadius = CGFloat.random(in: (7 * scale)...(12 * scale))
+        let origin = CGPoint(
+            x: touchLocation.x + particleReach + cos(generatorAngle) * generatorRadius,
+            y: touchLocation.y + particleReach + sin(generatorAngle) * generatorRadius
+        )
+        let speed = CGFloat.random(in: profile.speedRange) * scale * (0.76 + intensity * 0.24)
+        let velocity = CGVector(
+            dx: cos(angle) * speed,
+            dy: sin(angle) * speed + profile.verticalBias * scale
+        )
+        let palette = world.particlePalette(at: now)
+        let isFastGesture = fingerSpeed > 140 * scale
+
+        return MusicMoodParticle(
+            bornAt: now,
+            lifetime: Double.random(in: 0.72...0.84),
+            origin: origin,
+            velocity: velocity,
+            size: CGFloat.random(in: (2 * scale)...(5 * scale)),
+            color: palette.randomElement() ?? .white,
+            gravity: profile.gravity * scale,
+            curl: profile.curl * scale,
+            phase: CGFloat.random(in: 0...(2 * .pi)),
+            hasLightStrand: isFastGesture && Double.random(in: 0...1) < 0.16
+        )
+    }
+
+    private func appendCenterRipple(at now: TimeInterval) {
+        guard !reduceMotion else { return }
+        ripples.append(
+            MusicMoodRipple(
+                bornAt: now,
+                lifetime: 0.95,
+                color: world.particlePalette(at: now).first ?? .white
+            )
+        )
+        lastRippleAt = now
+    }
+
+    private func endInteraction() {
+        guard isTouching else { return }
+        isTouching = false
+        isTouchingCenter = false
+        fingerSpeed = 0
+        emissionTask?.cancel()
+        emissionTask = nil
+        burstTask?.cancel()
+        burstTask = nil
+        reformOrb()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            guard !isTouching else { return }
+            particles.removeAll()
+            ripples.removeAll()
+        }
+    }
+
+    private func resetInteraction(clearParticles: Bool) {
+        isTouching = false
+        isTouchingCenter = false
+        fingerSpeed = 0
+        emissionTask?.cancel()
+        emissionTask = nil
+        burstTask?.cancel()
+        burstTask = nil
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            chargeProgress = 0
+            dissolveProgress = 0
+        }
+        if clearParticles {
+            particles.removeAll()
+            orbBodyParticles.removeAll()
+            ripples.removeAll()
+        }
+    }
+
+    private func beginOrbDissolve(at now: TimeInterval) {
+        if orbBodyParticles.isEmpty {
+            orbBodyParticles = makeOrbBodyParticles(at: now)
+        }
+        burstTask?.cancel()
+        dissolveProgress = 0
+
+        withAnimation(.timingCurve(0.22, 0.78, 0.28, 1, duration: 0.14)) {
+            chargeProgress = 1
+        }
+
+        burstTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(140))
+            } catch {
+                return
+            }
+            guard isTouching else { return }
+
+            let feedback = UIImpactFeedbackGenerator(style: .medium)
+            feedback.prepare()
+            feedback.impactOccurred(intensity: 0.72)
+            withAnimation(.timingCurve(0.12, 0.76, 0.18, 1, duration: 0.30)) {
+                dissolveProgress = 1
+            }
+        }
+    }
+
+    private func reformOrb() {
+        guard !reduceMotion else {
+            chargeProgress = 0
+            dissolveProgress = 0
+            orbBodyParticles.removeAll()
+            return
+        }
+
+        burstTask?.cancel()
+        burstTask = nil
+        withAnimation(.timingCurve(0.16, 0.88, 0.24, 1, duration: 0.58)) {
+            chargeProgress = 0
+            dissolveProgress = 0
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.64) {
+            guard !isTouching else { return }
+            orbBodyParticles.removeAll()
+        }
+    }
+
+    private func makeOrbBodyParticles(at now: TimeInterval) -> [MusicOrbBodyParticle] {
+        let center = CGPoint(x: fieldSize / 2, y: fieldSize / 2)
+        let palette = world.particlePalette(at: now)
+        let sourceRadius = orbSize / 2 - 8 * scale
+
+        return (0..<420).map { _ in
+            let angle = CGFloat.random(in: 0...(2 * .pi))
+            let radius = sqrt(CGFloat.random(in: 0...1)) * sourceRadius
+            let sourceOffset = CGVector(
+                dx: cos(angle) * radius,
+                dy: sin(angle) * radius
+            )
+            let scatterAngle = angle + CGFloat.random(in: -0.42...0.42)
+            let scatterDistance = CGFloat.random(in: (38 * scale)...(72 * scale))
+
+            return MusicOrbBodyParticle(
+                origin: CGPoint(
+                    x: center.x + sourceOffset.dx,
+                    y: center.y + sourceOffset.dy
+                ),
+                scatterOffset: CGVector(
+                    dx: cos(scatterAngle) * scatterDistance,
+                    dy: sin(scatterAngle) * scatterDistance
+                ),
+                size: CGFloat.random(in: (1.6 * scale)...(5.2 * scale)),
+                color: palette.randomElement() ?? .white,
+                phase: CGFloat.random(in: 0...(2 * .pi))
+            )
+        }
+    }
+
+    private func triggerSoftHaptic() {
+        let feedback = UIImpactFeedbackGenerator(style: .soft)
+        feedback.prepare()
+        feedback.impactOccurred(intensity: 0.55)
+    }
+
+    private func drawOrbBodyParticles(
+        context: inout GraphicsContext,
+        at now: TimeInterval
+    ) {
+        guard !reduceMotion, dissolveProgress > 0, !orbBodyParticles.isEmpty else { return }
+        let progress = min(max(dissolveProgress, 0), 1)
+        let easedProgress = 1 - pow(1 - progress, 4)
+        let center = CGPoint(x: fieldSize / 2, y: fieldSize / 2)
+        let sourceScale = 1 - chargeProgress * 0.24
+
+        context.drawLayer { layer in
+            layer.blendMode = .plusLighter
+
+            for particle in orbBodyParticles {
+                let scatterLength = max(
+                    hypot(particle.scatterOffset.dx, particle.scatterOffset.dy),
+                    0.001
+                )
+                let tangent = CGVector(
+                    dx: -particle.scatterOffset.dy / scatterLength,
+                    dy: particle.scatterOffset.dx / scatterLength
+                )
+                let drift = CGFloat(sin(now * 1.8 + Double(particle.phase)))
+                    * 3.2 * scale * progress
+                let chargedOrigin = CGPoint(
+                    x: center.x + (particle.origin.x - center.x) * sourceScale,
+                    y: center.y + (particle.origin.y - center.y) * sourceScale
+                )
+                let point = CGPoint(
+                    x: chargedOrigin.x
+                        + particle.scatterOffset.dx * easedProgress
+                        + tangent.dx * drift,
+                    y: chargedOrigin.y
+                        + particle.scatterOffset.dy * easedProgress
+                        + tangent.dy * drift
+                )
+                let diameter = particle.size * (0.70 + progress * 0.34)
+                let opacity = min(progress * 2.2, 1)
+                let outerGlowRect = CGRect(
+                    x: point.x - diameter * 2.45,
+                    y: point.y - diameter * 2.45,
+                    width: diameter * 4.9,
+                    height: diameter * 4.9
+                )
+                layer.fill(
+                    Path(ellipseIn: outerGlowRect),
+                    with: .color(particle.color.opacity(opacity * 0.045))
+                )
+                let glowRect = CGRect(
+                    x: point.x - diameter * 1.55,
+                    y: point.y - diameter * 1.55,
+                    width: diameter * 3.1,
+                    height: diameter * 3.1
+                )
+                layer.fill(
+                    Path(ellipseIn: glowRect),
+                    with: .color(particle.color.opacity(opacity * 0.10))
+                )
+                let nearGlowRect = CGRect(
+                    x: point.x - diameter,
+                    y: point.y - diameter,
+                    width: diameter * 2,
+                    height: diameter * 2
+                )
+                layer.fill(
+                    Path(ellipseIn: nearGlowRect),
+                    with: .color(particle.color.opacity(opacity * 0.18))
+                )
+                layer.fill(
+                    Path(
+                        ellipseIn: CGRect(
+                            x: point.x - diameter / 2,
+                            y: point.y - diameter / 2,
+                            width: diameter,
+                            height: diameter
+                        )
+                    ),
+                    with: .color(particle.color.opacity(opacity * 0.82))
+                )
+            }
+        }
+    }
+
+    private func drawParticles(
+        context: inout GraphicsContext,
+        at now: TimeInterval
+    ) {
+        guard !reduceMotion else { return }
+
+        context.drawLayer { layer in
+            layer.blendMode = .plusLighter
+
+            for particle in particles {
+                let age = now - particle.bornAt
+                guard age >= 0, age < particle.lifetime else { continue }
+
+                let elapsed = CGFloat(age)
+                let progress = min(max(elapsed / CGFloat(particle.lifetime), 0), 1)
+                let speed = max(hypot(particle.velocity.dx, particle.velocity.dy), 0.001)
+                let perpendicular = CGVector(
+                    dx: -particle.velocity.dy / speed,
+                    dy: particle.velocity.dx / speed
+                )
+                let curlOffset = sin(progress * .pi * 2 + particle.phase)
+                    * particle.curl * progress
+                let point = CGPoint(
+                    x: particle.origin.x
+                        + particle.velocity.dx * elapsed
+                        + perpendicular.dx * curlOffset,
+                    y: particle.origin.y
+                        + particle.velocity.dy * elapsed
+                        + 0.5 * particle.gravity * elapsed * elapsed
+                        + perpendicular.dy * curlOffset
+                )
+                let fadeIn = min(progress / 0.10, 1)
+                let fadeOut = pow(max(1 - progress, 0), 1.65)
+                let opacity = fadeIn * fadeOut
+                let diameter = particle.size * (0.78 + (1 - progress) * 0.32)
+
+                let outerGlowRect = CGRect(
+                    x: point.x - diameter * 2.6,
+                    y: point.y - diameter * 2.6,
+                    width: diameter * 5.2,
+                    height: diameter * 5.2
+                )
+                layer.fill(
+                    Path(ellipseIn: outerGlowRect),
+                    with: .color(particle.color.opacity(opacity * 0.055))
+                )
+                let glowRect = CGRect(
+                    x: point.x - diameter * 1.55,
+                    y: point.y - diameter * 1.55,
+                    width: diameter * 3.1,
+                    height: diameter * 3.1
+                )
+                layer.fill(
+                    Path(ellipseIn: glowRect),
+                    with: .color(particle.color.opacity(opacity * 0.13))
+                )
+                let nearGlowRect = CGRect(
+                    x: point.x - diameter,
+                    y: point.y - diameter,
+                    width: diameter * 2,
+                    height: diameter * 2
+                )
+                layer.fill(
+                    Path(ellipseIn: nearGlowRect),
+                    with: .color(particle.color.opacity(opacity * 0.22))
+                )
+
+                let coreRect = CGRect(
+                    x: point.x - diameter / 2,
+                    y: point.y - diameter / 2,
+                    width: diameter,
+                    height: diameter
+                )
+                layer.fill(
+                    Path(ellipseIn: coreRect),
+                    with: .color(particle.color.opacity(opacity * 0.82))
+                )
+
+                if particle.hasLightStrand {
+                    let strandLength = min(14 * scale, speed * 0.15)
+                    var strand = Path()
+                    strand.move(
+                        to: CGPoint(
+                            x: point.x - particle.velocity.dx / speed * strandLength,
+                            y: point.y - particle.velocity.dy / speed * strandLength
+                        )
+                    )
+                    strand.addLine(to: point)
+                    layer.stroke(
+                        strand,
+                        with: .color(particle.color.opacity(opacity * 0.48)),
+                        style: StrokeStyle(
+                            lineWidth: max(0.8 * scale, diameter * 0.28),
+                            lineCap: .round
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private func drawRipples(
+        context: inout GraphicsContext,
+        at now: TimeInterval
+    ) {
+        guard !reduceMotion else { return }
+        let center = CGPoint(x: fieldSize / 2, y: fieldSize / 2)
+
+        context.drawLayer { layer in
+            layer.blendMode = .plusLighter
+            for ripple in ripples {
+                for delay in [0.0, 0.16] {
+                    let age = now - ripple.bornAt - delay
+                    guard age >= 0, age < ripple.lifetime else { continue }
+                    let progress = CGFloat(age / ripple.lifetime)
+                    let radius = orbSize * (0.08 + progress * 0.34)
+                    let opacity = pow(max(1 - progress, 0), 1.8) * 0.52
+                    let rect = CGRect(
+                        x: center.x - radius,
+                        y: center.y - radius,
+                        width: radius * 2,
+                        height: radius * 2
+                    )
+                    layer.stroke(
+                        Path(ellipseIn: rect),
+                        with: .color(ripple.color.opacity(opacity)),
+                        style: StrokeStyle(
+                            lineWidth: max(scale, (2.4 - progress * 1.2) * scale),
+                            lineCap: .round
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private func drawTouchIndicator(
+        context: inout GraphicsContext,
+        at now: TimeInterval
+    ) {
+        guard isTouching else { return }
+        let point = CGPoint(
+            x: touchLocation.x + particleReach,
+            y: touchLocation.y + particleReach
+        )
+        let pulse = reduceMotion ? 0 : CGFloat((sin(now * 5.2) + 1) / 2)
+        let radius = (10 + pulse * 2) * scale
+        let color = world.particlePalette(at: now).first ?? .white
+        let rect = CGRect(
+            x: point.x - radius,
+            y: point.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        )
+
+        context.drawLayer { layer in
+            layer.blendMode = .plusLighter
+            layer.fill(
+                Path(ellipseIn: rect.insetBy(dx: -4 * scale, dy: -4 * scale)),
+                with: .color(color.opacity(reduceMotion ? 0.14 : 0.10))
+            )
+            layer.stroke(
+                Path(ellipseIn: rect),
+                with: .color(color.opacity(0.56)),
+                style: StrokeStyle(lineWidth: 1.2 * scale, lineCap: .round)
+            )
+        }
+    }
+}
+
+private struct MusicMoodParticle: Identifiable {
+    let id = UUID()
+    let bornAt: TimeInterval
+    let lifetime: TimeInterval
+    let origin: CGPoint
+    let velocity: CGVector
+    let size: CGFloat
+    let color: Color
+    let gravity: CGFloat
+    let curl: CGFloat
+    let phase: CGFloat
+    let hasLightStrand: Bool
+}
+
+private struct MusicOrbBodyParticle: Identifiable {
+    let id = UUID()
+    let origin: CGPoint
+    let scatterOffset: CGVector
+    let size: CGFloat
+    let color: Color
+    let phase: CGFloat
+}
+
+private struct MusicMoodRipple: Identifiable {
+    let id = UUID()
+    let bornAt: TimeInterval
+    let lifetime: TimeInterval
+    let color: Color
+}
+
+private struct MusicParticleMotionProfile {
+    let speedRange: ClosedRange<CGFloat>
+    let angularSpread: CGFloat
+    let gravity: CGFloat
+    let curl: CGFloat
+    let verticalBias: CGFloat
+    let emissionCadence: Int
+}
+
+private extension MusicWorld {
+    var particleMotionProfile: MusicParticleMotionProfile {
+        switch self {
+        case .happy:
+            MusicParticleMotionProfile(
+                speedRange: 42...55,
+                angularSpread: 0.42,
+                gravity: -5,
+                curl: 4,
+                verticalBias: -5,
+                emissionCadence: 1
+            )
+        case .calm:
+            MusicParticleMotionProfile(
+                speedRange: 26...38,
+                angularSpread: 0.56,
+                gravity: -1,
+                curl: 5,
+                verticalBias: -2,
+                emissionCadence: 2
+            )
+        case .low:
+            MusicParticleMotionProfile(
+                speedRange: 24...34,
+                angularSpread: 0.30,
+                gravity: 13,
+                curl: 3,
+                verticalBias: 6,
+                emissionCadence: 2
+            )
+        case .angry:
+            MusicParticleMotionProfile(
+                speedRange: 46...60,
+                angularSpread: 0.18,
+                gravity: 1,
+                curl: 2,
+                verticalBias: 0,
+                emissionCadence: 1
+            )
+        case .tense:
+            MusicParticleMotionProfile(
+                speedRange: 34...48,
+                angularSpread: 0.48,
+                gravity: 3,
+                curl: 8,
+                verticalBias: 1,
+                emissionCadence: 1
+            )
+        }
+    }
+
+    func particlePalette(at time: TimeInterval) -> [Color] {
+        let frameDuration = max(motionMood.orbFrameDuration, 0.1)
+        let frame = Int(floor(time / frameDuration)) % 4
+
+        let palettes: [[Color]]
+        switch self {
+        case .happy:
+            palettes = [
+                [Color(red: 1.00, green: 0.78, blue: 0.32), Color(red: 1.00, green: 0.52, blue: 0.60), .white],
+                [Color(red: 1.00, green: 0.72, blue: 0.26), Color(red: 1.00, green: 0.86, blue: 0.48), .white],
+                [Color(red: 1.00, green: 0.58, blue: 0.24), Color(red: 1.00, green: 0.81, blue: 0.46), .white],
+                [Color(red: 1.00, green: 0.85, blue: 0.22), Color(red: 1.00, green: 0.61, blue: 0.46), .white]
+            ]
+        case .calm:
+            palettes = [
+                [Color(red: 0.28, green: 0.91, blue: 0.94), Color(red: 0.60, green: 0.98, blue: 0.93), .white],
+                [Color(red: 0.10, green: 0.78, blue: 0.91), Color(red: 0.54, green: 0.92, blue: 0.98), .white],
+                [Color(red: 0.10, green: 0.88, blue: 0.80), Color(red: 0.35, green: 0.69, blue: 0.96), .white],
+                [Color(red: 0.42, green: 0.94, blue: 0.79), Color(red: 0.55, green: 0.90, blue: 0.94), .white]
+            ]
+        case .low:
+            palettes = [
+                [Color(red: 0.44, green: 0.64, blue: 0.82), Color(red: 0.65, green: 0.77, blue: 0.91), .white],
+                [Color(red: 0.19, green: 0.55, blue: 0.88), Color(red: 0.18, green: 0.84, blue: 0.81), .white],
+                [Color(red: 0.36, green: 0.32, blue: 0.94), Color(red: 0.33, green: 0.79, blue: 0.92), .white],
+                [Color(red: 0.56, green: 0.45, blue: 0.91), Color(red: 0.69, green: 0.66, blue: 0.93), .white]
+            ]
+        case .angry, .tense:
+            palettes = [
+                [Color(red: 1.00, green: 0.91, blue: 0.38), Color(red: 1.00, green: 0.72, blue: 0.42), .white],
+                [Color(red: 1.00, green: 0.82, blue: 0.16), Color(red: 1.00, green: 0.93, blue: 0.46), .white],
+                [Color(red: 1.00, green: 0.86, blue: 0.26), Color(red: 1.00, green: 0.66, blue: 0.54), .white],
+                [Color(red: 0.96, green: 0.92, blue: 0.72), Color(red: 1.00, green: 0.72, blue: 0.72), .white]
+            ]
+        }
+        return palettes[frame]
     }
 }
 
