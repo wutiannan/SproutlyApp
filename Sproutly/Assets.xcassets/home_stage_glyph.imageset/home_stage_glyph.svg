@@ -1,0 +1,16 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="55" height="33" viewBox="0 0 55 33" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="&#231;&#149;&#140;&#233;&#157;&#162;&#229;&#176;&#143;&#228;&#187;&#182;">
+<path id="Rectangle 220" opacity="0.5" d="M5.91579e-08 24.0467C1.13957e-07 15.7531 10.93 11.5179 18.0594 15.7553C21.3123 17.6888 24.5908 19 27.5 19C30.4092 19 33.6877 17.6888 36.9406 15.7553C44.07 11.5179 55 15.7531 55 24.0467C55 28.9914 50.9915 33 46.0467 33L8.95334 33C4.00855 33 2.64859e-08 28.9914 5.91579e-08 24.0467Z" fill="url(#paint0_linear_0_4)"/>
+<circle id="Ellipse 45" opacity="0.5" cx="27.5" cy="11.5" r="6.5" fill="url(#paint1_linear_0_4)"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_4" x1="27.5" y1="0" x2="27.5" y2="33" gradientUnits="userSpaceOnUse">
+<stop stop-color="#00C3D0" stop-opacity="0.25"/>
+<stop offset="1" stop-color="#00D087" stop-opacity="0.75"/>
+</linearGradient>
+<linearGradient id="paint1_linear_0_4" x1="27.5" y1="5" x2="27.5" y2="18" gradientUnits="userSpaceOnUse">
+<stop stop-color="#00C3D0" stop-opacity="0.25"/>
+<stop offset="1" stop-color="#00D087" stop-opacity="0.75"/>
+</linearGradient>
+</defs>
+</svg>

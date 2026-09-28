@@ -1,28 +1,168 @@
 import AVFoundation
+import Combine
+import simd
 import SwiftUI
 
-/// Figma 高保真最终稿「首页1」的可交互实现。
-/// 设计基准：402 × 874，节点 66:2743。
+private enum HomeWorldDestination: Int, CaseIterable {
+    case music
+    case ar
+    case profile
+
+    var title: String {
+        switch self {
+        case .music: "音乐花园"
+        case .ar: "花房探索"
+        case .profile: "我的小屋"
+        }
+    }
+
+    var tab: AppTab {
+        switch self {
+        case .music: .mood
+        case .ar: .room
+        case .profile: .profile
+        }
+    }
+
+    var entrance: HomeGlobeEntrance {
+        switch self {
+        case .music: .music
+        case .ar: .ar
+        case .profile: .profile
+        }
+    }
+
+    var navAsset: String {
+        switch self {
+        case .music: "home_world_nav_music"
+        case .ar: "home_world_nav_ar"
+        case .profile: "home_world_nav_profile"
+        }
+    }
+
+    var previewAsset: String {
+        switch self {
+        case .music: "home_confirm_music_window"
+        case .ar: "home_confirm_ar_window"
+        case .profile: "home_confirm_profile_window"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .music: Color(red: 0.29, green: 0.40, blue: 0.55)
+        case .ar: Color(red: 0.17, green: 0.40, blue: 0.33)
+        case .profile: Color(red: 0.46, green: 0.29, blue: 0.32)
+        }
+    }
+
+    var confirmationFill: Color {
+        switch self {
+        case .music: Color(red: 0.43, green: 0.57, blue: 0.74).opacity(0.86)
+        case .ar: Color(red: 0.38, green: 0.67, blue: 0.54).opacity(0.88)
+        case .profile: Color(red: 0.74, green: 0.50, blue: 0.53).opacity(0.88)
+        }
+    }
+
+    var confirmationShadow: Color {
+        switch self {
+        case .music: Color(red: 0.20, green: 0.31, blue: 0.48).opacity(0.20)
+        case .ar: Color(red: 0.17, green: 0.39, blue: 0.31).opacity(0.20)
+        case .profile: Color(red: 0.42, green: 0.24, blue: 0.27).opacity(0.19)
+        }
+    }
+
+    var rotation: simd_quatf { entrance.focusRotation }
+
+}
+
+/// Figma「SY1-1～SY1-5」首页：3D 世界球、循环轨道导航和 KAKA 装扮入口。
+/// 设计基准：402 × 874，起始节点 1595:6889。
 struct GardenHomeView: View {
     @EnvironmentObject private var store: GardenStore
+    var onContentReady: () -> Void = {}
+    var onNavigate: ((AppTab) -> Void)? = nil
     var onCustomizationChanged: (Bool) -> Void = { _ in }
-    @State private var page = 1
-    @State private var selectedMood: HomeMood = .yellow
-    @State private var outfitSelection: KakaAppearance? = .bee
-    @State private var moodSelection: KakaAppearance? = .angry
-    @StateObject private var moodMusicPlayer = MoodMusicPlayer()
-    /// 首页 6 不是整页跳转，而是从底部上升的装扮弹窗；60 为设计稿中保留的顶部空白。
-    @State private var customizationSheetOffset: CGFloat = 874
 
-    private enum HomeMood {
-        case yellow, blue, orange, green
+    @State private var selectedWorld: HomeWorldDestination = .music
+    @State private var pendingWorld: HomeWorldDestination?
+    @State private var hasActivatedWorldNavigation = false
+    @State private var globeRotation = HomeWorldDestination.music.rotation
+    @State private var globeInteraction = HomeGlobeInteraction()
+    @State private var dragOriginRotation: simd_quatf?
+    @State private var isDraggingGlobe = false
+    @State private var isCustomizing = false
+    @State private var selectedMood: HomeMood = .happy
+    @State private var areMoodOptionsExpanded = false
+    @AppStorage("sproutly.homeSelectedMood") private var storedMoodRawValue: Int = 0
+    @State private var outfitSelection: KakaAppearance? = .bee
+    @StateObject private var moodMusicPlayer = MoodMusicPlayer()
+    @State private var customizationSheetOffset: CGFloat = 874
+    @State private var lastGlobeAutoSpinDate: Date?
+    private let customizationSheetHeight: CGFloat = 788
+
+    private static let globeAutoSpinTimer = Timer.publish(
+        every: 1.0 / 30.0,
+        on: .main,
+        in: .common
+    ).autoconnect()
+
+    private var customizationSheetRestingOffset: CGFloat {
+        874 - customizationSheetHeight
+    }
+
+    private enum HomeMood: Int, CaseIterable, Hashable {
+        case happy, calm, sad, angry, afraid
+
+        var title: String {
+            switch self {
+            case .happy: "开心"
+            case .calm: "平静"
+            case .sad: "难过"
+            case .angry: "生气"
+            case .afraid: "害怕"
+            }
+        }
+
+        var orbAsset: String {
+            switch self {
+            case .happy: "music_home_orb_happy"
+            case .calm: "music_home_orb_calm"
+            case .sad: "music_home_orb_sad"
+            case .angry: "music_home_orb_angry"
+            case .afraid: "music_home_orb_afraid"
+            }
+        }
 
         var musicMood: MusicMood {
             switch self {
-            case .yellow: .joy
-            case .green: .calm
-            case .orange: .expectation
-            case .blue: .low
+            case .happy: .joy
+            case .calm: .calm
+            case .sad: .low
+            case .angry, .afraid: .expectation
+            }
+        }
+
+        var playback: HomeMoodPlayback {
+            switch self {
+            case .happy:
+                HomeMoodPlayback(key: "happy", rate: 1.08, pitch: 3.0, filterFrequency: 9_200)
+            case .calm:
+                HomeMoodPlayback(key: "calm", rate: 0.94, pitch: 0, filterFrequency: 7_000)
+            case .sad:
+                HomeMoodPlayback(key: "sad", rate: 0.82, pitch: -4.0, filterFrequency: 4_800)
+            case .angry:
+                HomeMoodPlayback(key: "angry", rate: 1.12, pitch: 2.0, filterFrequency: 8_600)
+            case .afraid:
+                HomeMoodPlayback(key: "afraid", rate: 1.00, pitch: -1.0, filterFrequency: 6_200)
+            }
+        }
+
+        var orbFrameDuration: TimeInterval {
+            switch self {
+            case .happy: 1.0
+            case .calm, .sad: 2.0
+            case .angry, .afraid: 0.8
             }
         }
 
@@ -34,222 +174,272 @@ struct GardenHomeView: View {
     var body: some View {
         GeometryReader { proxy in
             let scale = max(proxy.size.width / 402, proxy.size.height / 874)
-            let renderedWidth = 402 * scale
-            let renderedHeight = 874 * scale
-            let backgroundPage = page == 6 ? 4 : page
-            let usesIndependentHomeLayer = (1...4).contains(backgroundPage)
-            let backgroundAsset = usesIndependentHomeLayer
-                ? "figma_home_\(backgroundPage)_clean"
-                : "figma_home_\(backgroundPage)"
 
             ZStack {
                 SproutlyHomeGradient().ignoresSafeArea()
 
-                homeBaseLayer(
-                    asset: backgroundAsset,
-                    hidesLegacyTop: usesIndependentHomeLayer,
-                    renderedWidth: renderedWidth,
-                    renderedHeight: renderedHeight,
-                    scale: scale,
-                    center: CGPoint(x: proxy.size.width / 2, y: proxy.size.height / 2)
-                )
+                stageTitle(scale: scale)
+                moodSelector(scale: scale)
+                homeKaka(scale: scale)
+                    .zIndex(13)
 
-                if page <= 4 {
-                    independentHomeLayer(scale: scale)
+                if !hasActivatedWorldNavigation {
+                    homeSpeechBubble(scale: scale)
+                        .zIndex(13)
                 }
 
-                if page <= 4 {
-                    homeKaka(scale: scale)
-
-                    if page == 1 {
-                        homeSpeechBubble(scale: scale)
-                    }
+                if hasActivatedWorldNavigation {
+                    worldOrbitVisual(scale: scale)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        .zIndex(11)
                 }
 
-                if page <= 5 {
-                    designButton(x: 24, y: 80, width: 85, height: 85, scale: scale) {
-                        markHomeInteraction()
-                        withAnimation(.easeInOut(duration: 0.36)) {
-                            page = page == 3 ? 4 : 3
-                        }
-                    }
+                globeLayer(scale: scale)
+                    .zIndex(10)
 
-                    designButton(x: 251, y: 80, width: 127, height: 83, scale: scale) {
-                        markHomeInteraction()
-                        withAnimation(.easeInOut(duration: 0.36)) {
-                            page = page == 2 ? 4 : 2
-                        }
-                    }
+                if hasActivatedWorldNavigation {
+                    worldOrbitInteractionLayer(scale: scale)
+                        .zIndex(12)
                 }
 
-                if page == 3 {
-                    moodChoice(.yellow, x: 112, y: 65, scale: scale)
-                    moodChoice(.blue, x: 119, y: 120, scale: scale)
-                    moodChoice(.orange, x: 27, y: 171, scale: scale)
-                    moodChoice(.green, x: 82, y: 165, scale: scale)
+                kakaCustomizationHotspot(scale: scale)
+                    .zIndex(12)
+
+                if let pendingWorld {
+                    worldConfirmation(pendingWorld, scale: scale)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        .zIndex(20)
                 }
 
-                designButton(x: 16, y: 680, width: 370, height: 72, scale: scale) {
-                    markHomeInteraction()
-                }
-
-                if (1...4).contains(page) {
-                    let kakaFrame = page == 1
-                        ? CGRect(x: 24, y: 620, width: 185, height: 128)
-                        : CGRect(x: 282, y: 516, width: 105, height: 90)
-                    designButton(
-                        x: kakaFrame.minX,
-                        y: kakaFrame.minY,
-                        width: kakaFrame.width,
-                        height: kakaFrame.height,
-                        scale: scale
-                    ) {
-                        markHomeInteraction()
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
-                            page = 6
-                            customizationSheetOffset = 60
-                        }
-                    }
-                }
-
-                if page == 4 {
-                    designButton(x: 0, y: 261, width: 402, height: 268, scale: scale) {
-                        markHomeInteraction()
-                        withAnimation(.easeIn(duration: 0.3)) { page = 7 }
-                    }
-                }
-
-                if page == 7 {
-                    designButton(x: 354, y: 174, width: 42, height: 42, scale: scale) {
-                        page = 4
-                    }
-                }
-
-                if page == 6 {
+                if isCustomizing {
                     customizationSheet(scale: scale)
+                        .zIndex(30)
                 }
-
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .ignoresSafeArea()
         .onAppear {
+            selectedMood = HomeMood(rawValue: storedMoodRawValue) ?? .happy
             moodMusicPlayer.preload()
-            moodMusicPlayer.play(selectedMood.musicMood)
+            if !store.parentPreferences.isQuietTime() {
+                moodMusicPlayer.play(selectedMood.playback)
+            }
+            if store.requestsKakaCustomization {
+                store.requestsKakaCustomization = false
+                synchronizeCustomizationSelection()
+                isCustomizing = true
+                customizationSheetOffset = customizationSheetRestingOffset
+            }
         }
-        .onChange(of: page) { _, newPage in
-            onCustomizationChanged(newPage == 6)
-            if newPage == 6 {
+        .onChange(of: isCustomizing) { _, newValue in
+            onCustomizationChanged(newValue)
+            if newValue {
                 synchronizeCustomizationSelection()
             }
         }
-        .onDisappear {
-            moodMusicPlayer.stop()
-            onCustomizationChanged(false)
-        }
-    }
-
-    private func moodBall(scale: CGFloat) -> some View {
-        homeMoodOrb(selectedMood, size: 85, scale: scale)
-            .frame(width: 85 * scale, height: 85 * scale)
-            .position(x: 66.5 * scale, y: 122.5 * scale)
-            .allowsHitTesting(false)
-    }
-
-    /// 首页 1–4 的旧整页截图只保留底部导航区域。
-    /// 顶部内容完全由统一渐变和透明独立素材组成，避免旧截图中的白底再次透出。
-    @ViewBuilder
-    private func homeBaseLayer(
-        asset: String,
-        hidesLegacyTop: Bool,
-        renderedWidth: CGFloat,
-        renderedHeight: CGFloat,
-        scale: CGFloat,
-        center: CGPoint
-    ) -> some View {
-        if hidesLegacyTop {
-            Image(asset)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: renderedWidth, height: renderedHeight)
-                .mask(alignment: .bottom) {
-                    Rectangle()
-                        .frame(width: renderedWidth, height: 232 * scale)
-                }
-                .position(center)
-                .accessibilityHidden(true)
-        } else {
-            Image(asset)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: renderedWidth, height: renderedHeight)
-                .position(center)
-                .accessibilityHidden(true)
-        }
-    }
-
-    /// 首页顶部采用一张连续渐变底面，再叠加 Figma 独立导出素材。
-    /// 不再从整页截图裁片，避免情绪球和故事卡周围出现矩形拼接边界。
-    private func independentHomeLayer(scale: CGFloat) -> some View {
-        ZStack {
-            SproutlyHomeGradientSlice(
-                sourceY: 0,
-                sourceHeight: 642,
-                scale: scale
-            )
-            .position(x: 201 * scale, y: 321 * scale)
-
-            Image("home_globe")
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 402 * scale, height: 353 * scale)
-                .position(x: 201 * scale, y: 425.5 * scale)
-
-            Image("home_stage_title")
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 186 * scale, height: 36 * scale)
-                .position(x: 201 * scale, y: 622 * scale)
-
-            Image(page == 2 ? "home_story_expanded" : "home_story_collapsed")
-                .resizable()
-                .interpolation(.high)
-                .frame(
-                    width: 127 * scale,
-                    height: (page == 2 ? 222 : 83) * scale
-                )
-                .position(
-                    x: 314.5 * scale,
-                    y: (page == 2 ? 191 : 121.5) * scale
-                )
-
-            moodBall(scale: scale)
-
-            if page == 3 {
-                homeMoodOrb(.yellow, size: 40, scale: scale)
-                    .position(x: 132 * scale, y: 85 * scale)
-                homeMoodOrb(.blue, size: 40, scale: scale)
-                    .position(x: 139 * scale, y: 140 * scale)
-                homeMoodOrb(.orange, size: 40, scale: scale)
-                    .position(x: 47 * scale, y: 191 * scale)
-                homeMoodOrb(.green, size: 40, scale: scale)
-                    .position(x: 102 * scale, y: 185 * scale)
+        .onChange(of: store.requestsKakaCustomization) { _, requested in
+            guard requested else { return }
+            store.requestsKakaCustomization = false
+            synchronizeCustomizationSelection()
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+                isCustomizing = true
+                customizationSheetOffset = customizationSheetRestingOffset
             }
         }
-        .allowsHitTesting(false)
+        .onDisappear {
+            moodMusicPlayer.stop(deactivateSession: store.selectedTab != .mood)
+            onCustomizationChanged(false)
+        }
+        .onReceive(Self.globeAutoSpinTimer) { date in
+            guard !hasActivatedWorldNavigation,
+                  !isDraggingGlobe,
+                  !UIAccessibility.isReduceMotionEnabled else {
+                lastGlobeAutoSpinDate = date
+                return
+            }
+
+            let previousDate = lastGlobeAutoSpinDate ?? date
+            let elapsed = min(max(date.timeIntervalSince(previousDate), 0), 0.1)
+            lastGlobeAutoSpinDate = date
+            guard elapsed > 0 else { return }
+
+            // 初始的小球只做很慢的自转，进入可交互导航后完全交给手势控制。
+            let yaw = simd_quatf(
+                angle: Float(elapsed * 0.16),
+                axis: SIMD3<Float>(0, 1, 0)
+            )
+            // 右乘表示绕世界球自身的局部竖直轴旋转，模拟地球自转；
+            // 左乘会绕页面世界轴横向翻转，视觉上像球在横着滚。
+            globeRotation = simd_normalize(globeRotation * yaw)
+        }
+    }
+
+    private func stageTitle(scale: CGFloat) -> some View {
+        ZStack {
+            Image("home_stage_glyph")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 55 * scale, height: 33 * scale)
+                .position(x: 135.5 * scale, y: 99.9 * scale)
+
+            Text("第一幕  春芽初醒")
+                .gardenFont(size: 16 * scale, weight: .medium)
+                .foregroundStyle(Color(red: 0.19, green: 0.37, blue: 0.39))
+                .frame(width: 142 * scale, height: 31 * scale)
+                .position(x: 231 * scale, y: 103.9 * scale)
+        }
+        .frame(width: 402 * scale, height: 140 * scale)
+        .position(x: 201 * scale, y: 70 * scale)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func globeLayer(scale: CGFloat) -> some View {
+        let diameter = (hasActivatedWorldNavigation ? 820 : 370) * scale
+        let renderHeight = diameter + (hasActivatedWorldNavigation ? 240 : 0) * scale
+        let renderWidth = diameter + (hasActivatedWorldNavigation ? 0 : 64) * scale
+        let centerY = (hasActivatedWorldNavigation ? 760 : 509) * scale
+        let isAutoSpinning = !hasActivatedWorldNavigation && !isDraggingGlobe
+
+        return ZStack {
+            HomeGlobeView(
+                rotation: globeRotation,
+                // 自转期间关闭 RealityKit 的补间动画；每个节拍直接应用小角度，
+                // 避免 0.46 秒的连续 move 叠加造成拖影或延迟。
+                isInteracting: isDraggingGlobe || isAutoSpinning,
+                showsEntranceHints: hasActivatedWorldNavigation,
+                interaction: globeInteraction,
+                renderHeightScale: Float(renderHeight / diameter),
+                onReady: onContentReady
+            )
+                // 小球旋转时凸起地形可越过触摸圆；留透明渲染余量避免左缘被裁切。
+                .frame(width: renderWidth, height: renderHeight)
+                .allowsHitTesting(false)
+
+            Color.clear
+                .frame(width: diameter, height: diameter)
+                .contentShape(Circle())
+                .gesture(globeDragGesture(diameter: diameter, hitTestYOffset: (renderHeight - diameter) / 2))
+                .accessibilityLabel("灵想世界球")
+                .accessibilityHint(
+                    hasActivatedWorldNavigation
+                        ? "向任意方向拖动球体，点击球面上的入口进入"
+                        : "向任意方向拖动球体"
+                )
+        }
+            .frame(width: diameter, height: renderHeight)
+            .position(x: 201 * scale, y: centerY)
+            .animation(.spring(response: 0.55, dampingFraction: 0.86), value: hasActivatedWorldNavigation)
+    }
+
+    private func globeDragGesture(diameter: CGFloat, hitTestYOffset: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                let travel = hypot(value.translation.width, value.translation.height)
+                guard travel >= 8 else { return }
+
+                activateWorldNavigation()
+                if dragOriginRotation == nil {
+                    dragOriginRotation = globeRotation
+                }
+                isDraggingGlobe = true
+                let start = arcballVector(at: value.startLocation, diameter: diameter)
+                let current = arcballVector(at: value.location, diameter: diameter)
+                let delta = simd_quatf(from: start, to: current)
+                globeRotation = simd_normalize(
+                    delta * (dragOriginRotation ?? globeRotation)
+                )
+                selectedWorld = nearestWorld(to: globeRotation)
+            }
+            .onEnded { value in
+                let wasDragging = isDraggingGlobe
+                dragOriginRotation = nil
+                isDraggingGlobe = false
+
+                guard !wasDragging else { return }
+                guard hasActivatedWorldNavigation else { return }
+                let hitPoint = CGPoint(x: value.location.x, y: value.location.y + hitTestYOffset)
+                guard let entrance = globeInteraction.entrance(at: hitPoint),
+                      let destination = HomeWorldDestination.allCases.first(where: { $0.entrance == entrance })
+                else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    pendingWorld = destination
+                }
+            }
+    }
+
+    /// 将触点映射到虚拟球面，斜向拖动也会产生对应的复合旋转轴。
+    private func arcballVector(at point: CGPoint, diameter: CGFloat) -> SIMD3<Float> {
+        let radius = max(diameter * 0.5, 1)
+        var x = Float((point.x - radius) / radius)
+        var y = Float((radius - point.y) / radius)
+        let squaredLength = x * x + y * y
+
+        if squaredLength > 1 {
+            let inverseLength = 1 / sqrt(squaredLength)
+            x *= inverseLength
+            y *= inverseLength
+            return SIMD3<Float>(x, y, 0)
+        }
+        return SIMD3<Float>(x, y, sqrt(max(0, 1 - squaredLength)))
+    }
+
+    private func nearestWorld(to rotation: simd_quatf) -> HomeWorldDestination {
+        let focus = simd_normalize(SIMD3<Float>(0, 0.55, 0.84))
+        return HomeWorldDestination.allCases.max { lhs, rhs in
+            simd_dot(rotation.act(lhs.entrance.direction), focus)
+                < simd_dot(rotation.act(rhs.entrance.direction), focus)
+        } ?? selectedWorld
+    }
+
+    private func moodSelector(scale: CGFloat) -> some View {
+        let surroundingSlots = [
+            CGPoint(x: 132, y: 180.67),
+            CGPoint(x: 140, y: 237.67),
+            CGPoint(x: 105, y: 283.67),
+            CGPoint(x: 47, y: 290.67)
+        ]
+        let surroundingMoods = HomeMood.allCases.filter { $0 != selectedMood }
+
+        return ZStack {
+            moodChoice(
+                selectedMood,
+                center: CGPoint(x: 66.5, y: 218.17),
+                size: 85,
+                scale: scale,
+                isSelected: true
+            )
+
+            if areMoodOptionsExpanded {
+                ForEach(Array(surroundingMoods.enumerated()), id: \.element) { index, mood in
+                    moodChoice(
+                        mood,
+                        center: surroundingSlots[index],
+                        size: 40,
+                        scale: scale,
+                        isSelected: false
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                }
+            }
+        }
+        .frame(width: 402 * scale, height: 874 * scale)
+        .zIndex(4)
     }
 
     private func homeMoodOrb(
         _ mood: HomeMood,
         size: CGFloat,
-        scale: CGFloat
+        scale: CGFloat,
+        isSelected: Bool
     ) -> some View {
-        AnimatedMoodOrb(
-            asset: mood.musicMood.orbAsset,
-            frameDuration: mood.musicMood.orbFrameDuration
+        FigmaHomeMoodOrb(
+            asset: mood.orbAsset,
+            isAnimated: isSelected,
+            frameDuration: mood.orbFrameDuration
         )
         .frame(width: size * scale, height: size * scale)
-        .id(mood.musicMood.orbAsset)
+        .id("\(mood.orbAsset)-\(isSelected)")
         .transaction { transaction in
             transaction.animation = nil
         }
@@ -257,15 +447,12 @@ struct GardenHomeView: View {
 
     private func homeSpeechBubble(scale: CGFloat) -> some View {
         ZStack {
-            HomeSpeechBubbleShape()
-                .fill(Color(red: 0.96, green: 0.96, blue: 0.98).opacity(0.9))
-                .overlay {
-                    HomeSpeechBubbleShape()
-                        .stroke(Color.white.opacity(0.82), lineWidth: scale)
-                }
-                .shadow(color: .black.opacity(0.17), radius: 6 * scale, y: 3 * scale)
+            Image("home_kaka_speech_bubble")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 235 * scale, height: 81 * scale)
 
-            Text("Hi~欢迎回到灵想世界，我是你的好伙伴KAKA!")
+            Text("转动世界球，看看不同的地方吧")
                 .gardenFont(size: 10 * scale)
                 .foregroundStyle(.black)
                 .lineLimit(1)
@@ -273,148 +460,161 @@ struct GardenHomeView: View {
                 .frame(width: 204 * scale, height: 50 * scale)
                 .offset(x: 5 * scale, y: -6 * scale)
         }
-        .frame(width: 224 * scale, height: 68 * scale)
-        .position(x: 270 * scale, y: 646 * scale)
+        .frame(width: 235 * scale, height: 81 * scale)
+        .position(x: 224 * scale, y: 740 * scale)
         .allowsHitTesting(false)
     }
 
-    private func moodChoice(_ mood: HomeMood, x: CGFloat, y: CGFloat, scale: CGFloat) -> some View {
-        designButton(x: x, y: y, width: 44, height: 44, scale: scale) {
+    private func moodChoice(
+        _ mood: HomeMood,
+        center: CGPoint,
+        size: CGFloat,
+        scale: CGFloat,
+        isSelected: Bool
+    ) -> some View {
+        Button {
+            if isSelected {
+                withAnimation(.easeOut(duration: 0.22)) {
+                    areMoodOptionsExpanded.toggle()
+                }
+                return
+            }
             selectedMood = mood
-            moodMusicPlayer.play(mood.musicMood)
+            storedMoodRawValue = mood.rawValue
+            moodMusicPlayer.play(mood.playback)
             store.recordEmotion(mood.emotionKind, source: .homeCheckIn)
-            markHomeInteraction()
-            withAnimation(.easeOut(duration: 0.28)) {
-                page = 4
+            withAnimation(.easeOut(duration: 0.18)) {
+                areMoodOptionsExpanded = false
             }
+        } label: {
+            homeMoodOrb(mood, size: size, scale: scale, isSelected: isSelected)
+                .frame(width: (size + (isSelected ? 4 : 8)) * scale,
+                       height: (size + (isSelected ? 4 : 8)) * scale)
+                .contentShape(Circle())
         }
-    }
-
-    @ViewBuilder
-    private func homeKaka(scale: CGFloat) -> some View {
-        switch page {
-        case 1:
-            KakaAvatarView(magnification: 1.42)
-                .frame(width: 185 * scale, height: 128 * scale)
-                .position(x: 116.5 * scale, y: 684 * scale)
-                .allowsHitTesting(false)
-        case 2...4:
-            KakaAvatarView(magnification: 1.24)
-                .frame(width: 105 * scale, height: 90 * scale)
-                .position(x: 334.5 * scale, y: 561 * scale)
-                .allowsHitTesting(false)
-        default:
-            EmptyView()
-        }
-    }
-
-    /// Figma 首页 6：从屏幕底部出现、顶部不顶满的装扮弹窗。
-    private func customizationSheet(scale: CGFloat) -> some View {
-        ZStack {
-            Image("figma_home_6_clean")
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 402 * scale, height: 814 * scale)
-                .position(x: 201 * scale, y: 407 * scale)
-                .accessibilityHidden(true)
-
-            // 舞台永远只放当前选中的 KAKA；空舞台底图已移除原装角色。
-            KakaAvatarView(magnification: 1.38, matchesVariantScale: true)
-                .frame(width: 242 * scale, height: 174 * scale)
-                .position(x: 201 * scale, y: 365 * scale)
-                .allowsHitTesting(false)
-
-            kakaCustomizationControls(scale: scale)
-        }
-        .frame(width: 402 * scale, height: 814 * scale)
-        .position(x: 201 * scale, y: 407 * scale)
-        .offset(y: customizationSheetOffset * scale)
-        .gesture(
-            DragGesture(minimumDistance: 8)
-                .onChanged { value in
-                    guard value.translation.height > 0 else { return }
-                    customizationSheetOffset = 60 + value.translation.height / scale
-                }
-                .onEnded { value in
-                    if value.translation.height > 90 * scale || value.predictedEndTranslation.height > 150 * scale {
-                        dismissCustomizationSheet()
-                    } else {
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-                            customizationSheetOffset = 60
-                        }
-                    }
-                }
+        .buttonStyle(.plain)
+        .zIndex(isSelected ? 2 : 1)
+        .position(x: center.x * scale, y: center.y * scale)
+        .accessibilityLabel(mood.title)
+        .accessibilityHint(
+            isSelected
+                ? (areMoodOptionsExpanded ? "收起其他心情" : "展开其他心情")
+                : "切换到\(mood.title)并播放对应音乐"
         )
-        .accessibilityHint("在弹窗顶部向下滑动可关闭装扮世界")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func kakaCustomizationControls(scale: CGFloat) -> some View {
-        Group {
-            // 覆盖底图标题，保持 Figma 首页 6 的青绿色标题胶囊与准确文字。
-            ZStack {
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(red: 0.13, green: 0.87, blue: 0.81), Color(red: 0.0, green: 0.63, blue: 0.67)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .overlay(Capsule().stroke(.white.opacity(0.75), lineWidth: scale))
-                    .shadow(color: .black.opacity(0.22), radius: 3 * scale, y: 2 * scale)
+    private func homeKaka(scale: CGFloat) -> some View {
+        KakaAvatarView(magnification: hasActivatedWorldNavigation ? 1.25 : 1.42)
+            .frame(
+                width: (hasActivatedWorldNavigation ? 140 : 190) * scale,
+                height: (hasActivatedWorldNavigation ? 104 : 138) * scale
+            )
+            .position(
+                x: (hasActivatedWorldNavigation ? 330 : 87) * scale,
+                y: (hasActivatedWorldNavigation ? 342 : 784) * scale
+            )
+            .allowsHitTesting(false)
+            .animation(.spring(response: 0.5, dampingFraction: 0.84), value: hasActivatedWorldNavigation)
+    }
 
-                Text("KAKA的装扮世界")
-                    .gardenFont(size: 16 * scale, weight: .medium)
-                    .foregroundStyle(.white)
+    private func kakaCustomizationHotspot(scale: CGFloat) -> some View {
+        Button {
+            synchronizeCustomizationSelection()
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+                isCustomizing = true
+                customizationSheetOffset = customizationSheetRestingOffset
             }
-            .frame(width: 136 * scale, height: 30 * scale)
-            .position(x: 201 * scale, y: 63 * scale)
+        } label: {
+            Color.clear
+                .frame(
+                    width: (hasActivatedWorldNavigation ? 140 : 190) * scale,
+                    height: (hasActivatedWorldNavigation ? 104 : 138) * scale
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .position(
+            x: (hasActivatedWorldNavigation ? 330 : 67) * scale,
+            y: (hasActivatedWorldNavigation ? 342 : 704) * scale
+        )
+        .animation(.spring(response: 0.5, dampingFraction: 0.84), value: hasActivatedWorldNavigation)
+        .accessibilityLabel("KAKA")
+        .accessibilityHint("打开 KAKA 的装扮世界")
+    }
 
-            KakaCarouselSection(
-                items: KakaAppearance.outfits,
-                selection: $outfitSelection,
-                scale: scale,
-                cardColors: [.orange, .pink, .yellow, .green, .orange, .blue, .red]
-            )
-            .position(x: 201 * scale, y: 548 * scale)
+    private func worldOrbitVisual(scale: CGFloat) -> some View {
+        Image(selectedWorld.navAsset)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: 374 * scale, height: 110 * scale)
+            .contentTransition(.opacity)
+            .id(selectedWorld.navAsset)
+            .allowsHitTesting(false)
+            .position(x: 201 * scale, y: 808 * scale)
+    }
 
-            KakaCarouselSection(
-                items: KakaAppearance.moods,
-                selection: $moodSelection,
-                scale: scale,
-                cardColors: [.pink, .red, .purple, .orange, .yellow, .cyan]
-            )
-            .position(x: 201 * scale, y: 716 * scale)
+    /// 透明热区与可见图标分离，球体手势不会吞掉底部导航点击。
+    private func worldOrbitInteractionLayer(scale: CGFloat) -> some View {
+        let destinations = orbitDestinations
+
+        return ZStack {
+            worldOrbitButton(
+                label: "转到\(destinations[0].title)",
+                width: 64,
+                height: 64,
+                scale: scale
+            ) {
+                selectWorld(destinations[0])
+            }
+            .position(x: 62 * scale, y: 55 * scale)
+
+            worldOrbitButton(
+                label: "转到\(destinations[1].title)",
+                width: 84,
+                height: 86,
+                scale: scale
+            ) {
+                selectWorld(destinations[1])
+            }
+            .position(x: 187 * scale, y: 55 * scale)
+
+            worldOrbitButton(
+                label: "转到\(destinations[2].title)",
+                width: 64,
+                height: 64,
+                scale: scale
+            ) {
+                selectWorld(destinations[2])
+            }
+            .position(x: 298 * scale, y: 55 * scale)
+        }
+        .frame(width: 374 * scale, height: 110 * scale)
+        .position(x: 201 * scale, y: 808 * scale)
+    }
+
+    /// Figma「世界轨道导航」的循环顺序：当前入口居中，两侧入口随状态换位。
+    private var orbitDestinations: [HomeWorldDestination] {
+        switch selectedWorld {
+        case .music: [.profile, .music, .ar]
+        case .ar: [.music, .ar, .profile]
+        case .profile: [.ar, .profile, .music]
         }
     }
 
-    private func synchronizeCustomizationSelection() {
-        if KakaAppearance.outfits.contains(store.kakaAppearance) {
-            outfitSelection = store.kakaAppearance
+    private func selectWorld(_ destination: HomeWorldDestination) {
+        pendingWorld = nil
+        dragOriginRotation = nil
+        isDraggingGlobe = false
+
+        withAnimation(.easeInOut(duration: 0.46)) {
+            selectedWorld = destination
         }
-        if KakaAppearance.moods.contains(store.kakaAppearance) {
-            moodSelection = store.kakaAppearance
-        }
+        globeRotation = destination.rotation
     }
 
-    private func dismissCustomizationSheet() {
-        withAnimation(.easeIn(duration: 0.24)) {
-            customizationSheetOffset = 874
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
-            page = 4
-        }
-    }
-
-    private func markHomeInteraction() {
-        if page == 1 {
-            page = 4
-        }
-    }
-
-    private func designButton(
-        x: CGFloat,
-        y: CGFloat,
+    private func worldOrbitButton(
+        label: String,
         width: CGFloat,
         height: CGFloat,
         scale: CGFloat,
@@ -426,79 +626,415 @@ struct GardenHomeView: View {
                 .frame(width: width * scale, height: height * scale)
         }
         .buttonStyle(.plain)
-        .position(x: (x + width / 2) * scale, y: (y + height / 2) * scale)
+        .accessibilityLabel(label)
+    }
+
+    private func worldConfirmation(
+        _ destination: HomeWorldDestination,
+        scale: CGFloat
+    ) -> some View {
+        ZStack {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color(red: 0.16, green: 0.37, blue: 0.39).opacity(0.20))
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.easeOut(duration: 0.2)) { pendingWorld = nil }
+                }
+
+            ZStack(alignment: .topLeading) {
+                HStack(spacing: 7 * scale) {
+                    confirmationHeaderIcon(destination, scale: scale)
+
+                    Text(destination.title)
+                        .gardenFont(size: 25 * scale, weight: .bold)
+                        .foregroundStyle(destination.tint)
+                        .lineLimit(1)
+                }
+                .fixedSize()
+                .position(
+                    x: 161 * scale,
+                    y: (destination == .music ? 32.1 : 27.5) * scale
+                )
+
+                Image(destination.previewAsset)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(
+                        width: 278 * scale,
+                        height: (destination == .profile ? 134 : 122) * scale
+                    )
+                    .position(
+                        x: 161 * scale,
+                        y: (destination == .profile ? 115 : 117) * scale
+                    )
+
+                confirmationBackButton(destination, scale: scale)
+                    .position(x: 68.5 * scale, y: 223 * scale)
+
+                confirmationEnterButton(destination, scale: scale)
+                    .position(x: 209.5 * scale, y: 223 * scale)
+            }
+            .frame(width: 322 * scale, height: 268 * scale)
+            .background(
+                RoundedRectangle(cornerRadius: 34 * scale, style: .continuous)
+                    .fill(Color(red: 1.0, green: 0.97, blue: 0.93).opacity(0.76))
+                    .background(
+                        .ultraThinMaterial,
+                        in: RoundedRectangle(cornerRadius: 34 * scale, style: .continuous)
+                    )
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 34 * scale, style: .continuous)
+                    .stroke(.white.opacity(0.82), lineWidth: 1.5 * scale)
+            }
+            .shadow(
+                color: Color(red: 0.08, green: 0.23, blue: 0.24).opacity(0.18),
+                radius: 15 * scale,
+                y: 12 * scale
+            )
+            .position(x: 202.84 * scale, y: 454.62 * scale)
+
+            KakaAvatarView(magnification: 1.04, matchesVariantScale: true)
+                .frame(width: 105 * scale, height: 77 * scale)
+                .position(x: 66.84 * scale, y: 325.12 * scale)
+                .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private func confirmationHeaderIcon(
+        _ destination: HomeWorldDestination,
+        scale: CGFloat
+    ) -> some View {
+        switch destination {
+        case .music:
+            Image("home_confirm_music_icon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 39 * scale, height: 28.5 * scale)
+        case .ar:
+            Image("home_confirm_ar_icon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 35.75 * scale, height: 33.72 * scale)
+        case .profile:
+            ZStack(alignment: .topLeading) {
+                Image("home_confirm_profile_frame")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 36.48 * scale, height: 35.4 * scale)
+
+                Image("home_confirm_profile_head")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 10.86 * scale, height: 10.86 * scale)
+                    .position(x: 16.31 * scale, y: 11.94 * scale)
+
+                Image("home_confirm_profile_body")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 23.22 * scale, height: 11.27 * scale)
+                    .position(x: 18.14 * scale, y: 24.1 * scale)
+            }
+            .frame(width: 36.48 * scale, height: 35.4 * scale)
+        }
+    }
+
+    private func confirmationBackButton(
+        _ destination: HomeWorldDestination,
+        scale: CGFloat
+    ) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) { pendingWorld = nil }
+        } label: {
+            ZStack {
+                Capsule()
+                    .fill(.white.opacity(0.34))
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .stroke(.white.opacity(0.62), lineWidth: scale)
+                    }
+                    .shadow(
+                        color: Color(red: 0.12, green: 0.28, blue: 0.28).opacity(0.10),
+                        radius: 6 * scale,
+                        y: 4 * scale
+                    )
+
+                Image("home_confirm_back")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 32 * scale, height: 32 * scale)
+            }
+            .frame(width: 80 * scale, height: 62 * scale)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("返回\(destination.title)")
+    }
+
+    private func confirmationEnterButton(
+        _ destination: HomeWorldDestination,
+        scale: CGFloat
+    ) -> some View {
+        Button {
+            if let onNavigate {
+                onNavigate(destination.tab)
+            } else {
+                pendingWorld = nil
+                store.selectedTab = destination.tab
+            }
+        } label: {
+            ZStack {
+                Capsule()
+                    .fill(destination.confirmationFill)
+                    .overlay {
+                        Capsule()
+                            .stroke(.white.opacity(0.52), lineWidth: scale)
+                    }
+                    .shadow(
+                        color: destination.confirmationShadow,
+                        radius: 7.5 * scale,
+                        y: 6 * scale
+                    )
+
+                Image("home_confirm_check")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 32 * scale, height: 32 * scale)
+            }
+            .frame(width: 162 * scale, height: 62 * scale)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("确认进入\(destination.title)")
+    }
+
+    /// Figma 首页 6：移除心情区后，从屏幕底部出现的装扮弹窗。
+    private func customizationSheet(scale: CGFloat) -> some View {
+        ZStack {
+            Image("kaka_customization_background")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 402 * scale, height: 788 * scale)
+                .position(x: 201 * scale, y: 394 * scale)
+                .accessibilityHidden(true)
+
+            // 舞台永远只放当前选中的 KAKA；空舞台底图已移除原装角色。
+            KakaAvatarView(magnification: 1.38, matchesVariantScale: true)
+                .frame(width: 242 * scale, height: 174 * scale)
+                .position(x: 201 * scale, y: 365 * scale)
+                .allowsHitTesting(false)
+
+            kakaCustomizationControls(scale: scale)
+        }
+        .frame(width: 402 * scale, height: 788 * scale)
+        .frame(width: 402 * scale, height: customizationSheetHeight * scale, alignment: .top)
+        .clipShape(RoundedRectangle(cornerRadius: 30 * scale, style: .continuous))
+        .position(x: 201 * scale, y: customizationSheetHeight * scale / 2)
+        .offset(y: customizationSheetOffset * scale)
+        .gesture(
+            DragGesture(minimumDistance: 8)
+                .onChanged { value in
+                    guard value.translation.height > 0 else { return }
+                    customizationSheetOffset = customizationSheetRestingOffset + value.translation.height / scale
+                }
+                .onEnded { value in
+                    if value.translation.height > 90 * scale || value.predictedEndTranslation.height > 150 * scale {
+                        dismissCustomizationSheet()
+                    } else {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                            customizationSheetOffset = customizationSheetRestingOffset
+                        }
+                    }
+                }
+        )
+        .accessibilityHint("在弹窗顶部向下滑动可关闭装扮世界")
+    }
+
+    private func kakaCustomizationControls(scale: CGFloat) -> some View {
+        Group {
+            Text("换装")
+                .gardenFont(size: 16 * scale, weight: .medium)
+                .foregroundStyle(.white)
+                .frame(width: 338 * scale, height: 24 * scale, alignment: .leading)
+                .position(x: 201 * scale, y: 564 * scale)
+
+            KakaCarouselSection(
+                items: KakaAppearance.outfits,
+                selection: $outfitSelection,
+                scale: scale,
+                cardColors: [.orange, .pink, .yellow, .green, .orange, .blue, .red]
+            )
+            .position(x: 201 * scale, y: 649 * scale)
+        }
+    }
+
+    private func synchronizeCustomizationSelection() {
+        if KakaAppearance.outfits.contains(store.kakaAppearance) {
+            outfitSelection = store.kakaAppearance
+        }
+    }
+
+    private func dismissCustomizationSheet() {
+        withAnimation(.easeIn(duration: 0.24)) {
+            customizationSheetOffset = 874
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+            isCustomizing = false
+        }
+    }
+
+    private func activateWorldNavigation() {
+        guard !hasActivatedWorldNavigation else { return }
+        withAnimation(.spring(response: 0.52, dampingFraction: 0.86)) {
+            hasActivatedWorldNavigation = true
+        }
     }
 
 }
 
 @MainActor
 final class MoodMusicPlayer: ObservableObject {
-    private let targetVolume: Float = 0.62
-    private struct Channel {
-        let player: AVQueuePlayer
-        let looper: AVPlayerLooper
-    }
-
-    private var channels: [MusicMood: Channel] = [:]
-    private var activeMood: MusicMood?
+    private static var sharedBaseBuffer: AVAudioPCMBuffer?
+    static var preloadedBaseBuffer: AVAudioPCMBuffer? { sharedBaseBuffer }
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let timePitch = AVAudioUnitTimePitch()
+    private let equalizer = AVAudioUnitEQ(numberOfBands: 1)
+    private var baseBuffer: AVAudioPCMBuffer?
+    private var graphInstalled = false
+    private var activeMoodKey: String?
+    private var transitionTask: Task<Void, Never>?
 
     func preload() {
-        for mood in MusicMood.allCases {
-            // Construct every queue and item up front. Calling `preroll` while a
-            // remote item is still `.unknown` raises an Objective-C exception.
-            _ = channel(for: mood)
+        guard baseBuffer == nil else { return }
+        if let cached = Self.sharedBaseBuffer {
+            baseBuffer = cached
+            return
+        }
+        guard
+              let url = Bundle.main.url(
+                forResource: "music_base_classical_vibes_2",
+                withExtension: "mp3"
+              ),
+              let file = try? AVAudioFile(forReading: url),
+              let buffer = AVAudioPCMBuffer(
+                pcmFormat: file.processingFormat,
+                frameCapacity: AVAudioFrameCount(file.length)
+              ) else { return }
+        do {
+            try file.read(into: buffer)
+            baseBuffer = buffer
+            Self.sharedBaseBuffer = buffer
+        } catch {
+            baseBuffer = nil
         }
     }
 
     func play(_ mood: MusicMood) {
-        if activeMood == mood, let player = channels[mood]?.player {
-            if player.timeControlStatus != .playing {
-                configureAudioSession()
-                player.playImmediately(atRate: mood.previewPlaybackRate)
-            }
+        let profile: HomeMoodPlayback
+        switch mood {
+        case .joy:
+            profile = HomeMoodPlayback(key: "happy", rate: 1.08, pitch: 3.0, filterFrequency: 9_200)
+        case .calm:
+            profile = HomeMoodPlayback(key: "calm", rate: 0.94, pitch: 0, filterFrequency: 7_000)
+        case .expectation:
+            profile = HomeMoodPlayback(key: "expectation", rate: 1.00, pitch: -1.0, filterFrequency: 6_200)
+        case .low:
+            profile = HomeMoodPlayback(key: "sad", rate: 0.82, pitch: -4.0, filterFrequency: 4_800)
+        }
+        play(profile)
+    }
+
+    func play(_ profile: HomeMoodPlayback) {
+        preload()
+        guard let baseBuffer else { return }
+
+        if activeMoodKey == profile.key, engine.isRunning {
             return
         }
-        guard let nextChannel = channel(for: mood) else { return }
+
+        transitionTask?.cancel()
+        let shouldFadeOut = engine.isRunning
+        transitionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            if shouldFadeOut {
+                await self.fadePlayer(to: 0, duration: 0.24)
+            }
+            guard !Task.isCancelled else { return }
+            self.start(profile, baseBuffer: baseBuffer)
+            await self.fadePlayer(
+                to: ParentComfortRuntime.musicVolume * 0.64,
+                duration: 0.26
+            )
+        }
+    }
+
+    private func start(_ profile: HomeMoodPlayback, baseBuffer: AVAudioPCMBuffer) {
 
         configureAudioSession()
-        if let activeMood, let activePlayer = channels[activeMood]?.player {
-            activePlayer.pause()
-            activePlayer.volume = 0
+        player.stop()
+        if engine.isRunning {
+            engine.stop()
         }
 
-        nextChannel.player.volume = targetVolume
-        nextChannel.player.playImmediately(atRate: mood.previewPlaybackRate)
-        activeMood = mood
+        do {
+            if !graphInstalled {
+                engine.attach(player)
+                engine.attach(timePitch)
+                engine.attach(equalizer)
+                engine.connect(player, to: timePitch, format: baseBuffer.format)
+                engine.connect(timePitch, to: equalizer, format: baseBuffer.format)
+                engine.connect(equalizer, to: engine.mainMixerNode, format: baseBuffer.format)
+                let band = equalizer.bands[0]
+                band.filterType = .lowPass
+                band.bypass = false
+                graphInstalled = true
+            }
+
+            timePitch.rate = profile.rate
+            timePitch.pitch = profile.pitch
+            equalizer.bands[0].frequency = profile.filterFrequency
+            equalizer.bands[0].gain = 0
+            player.volume = 0
+            player.scheduleBuffer(baseBuffer, at: nil, options: .loops)
+            engine.prepare()
+            try engine.start()
+            player.play()
+            activeMoodKey = profile.key
+        } catch {
+            stop()
+        }
     }
 
-    func stop() {
-        for channel in channels.values {
-            channel.player.pause()
-            channel.player.volume = 0
+    private func fadePlayer(to target: Float, duration: TimeInterval) async {
+        let start = player.volume
+        let steps = max(1, Int(duration / 0.04))
+        for step in 1...steps {
+            guard !Task.isCancelled else { return }
+            let progress = Float(step) / Float(steps)
+            player.volume = start + (target - start) * progress
+            try? await Task.sleep(for: .milliseconds(40))
         }
-        activeMood = nil
-        try? AVAudioSession.sharedInstance().setActive(
-            false,
-            options: .notifyOthersOnDeactivation
-        )
+        player.volume = target
     }
 
-    private func channel(for mood: MusicMood) -> Channel? {
-        if let channel = channels[mood] {
-            return channel
-        }
-        guard let url = mood.musicStreamURL else { return nil }
-
-        let item = AVPlayerItem(url: url)
-        item.audioTimePitchAlgorithm = mood == .low ? .varispeed : .spectral
-        item.preferredForwardBufferDuration = 3
-        let player = AVQueuePlayer()
-        player.automaticallyWaitsToMinimizeStalling = false
+    func stop(deactivateSession: Bool = true) {
+        transitionTask?.cancel()
+        transitionTask = nil
+        player.stop()
+        engine.stop()
         player.volume = 0
-        let looper = AVPlayerLooper(player: player, templateItem: item)
-        let channel = Channel(player: player, looper: looper)
-        channels[mood] = channel
-        return channel
+        activeMoodKey = nil
+        if deactivateSession {
+            try? AVAudioSession.sharedInstance().setActive(
+                false,
+                options: .notifyOthersOnDeactivation
+            )
+        }
     }
 
     private func configureAudioSession() {
@@ -512,24 +1048,59 @@ final class MoodMusicPlayer: ObservableObject {
     }
 }
 
-private struct HomeSpeechBubbleShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let body = CGRect(
-            x: rect.width * 0.055,
-            y: 0,
-            width: rect.width * 0.945,
-            height: rect.height * 0.79
-        )
-        path.addRoundedRect(
-            in: body,
-            cornerSize: CGSize(width: rect.height * 0.24, height: rect.height * 0.24)
-        )
-        path.move(to: CGPoint(x: rect.width * 0.18, y: rect.height * 0.73))
-        path.addLine(to: CGPoint(x: 0, y: rect.height))
-        path.addLine(to: CGPoint(x: rect.width * 0.075, y: rect.height * 0.62))
-        path.closeSubpath()
-        return path
+struct HomeMoodPlayback {
+    let key: String
+    let rate: Float
+    let pitch: Float
+    let filterFrequency: Float
+}
+
+/// 首页五种情绪球使用 Figma 导出的透明三帧素材。
+/// 未选中时只显示首帧，选中时在同一素材内循环播放，保证球的颜色和音乐板块一致。
+private struct FigmaHomeMoodOrb: View {
+    let asset: String
+    let isAnimated: Bool
+    let frameDuration: TimeInterval
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let frameCount = 3
+
+    var body: some View {
+        Group {
+            if isAnimated && !reduceMotion {
+                TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
+                    let rawPhase = timeline.date.timeIntervalSinceReferenceDate / frameDuration
+                    let baseFrame = Int(floor(rawPhase)) % frameCount
+                    let nextFrame = (baseFrame + 1) % frameCount
+                    let linearBlend = rawPhase - floor(rawPhase)
+                    let blend = (1 - cos(.pi * linearBlend)) / 2
+
+                    ZStack {
+                        spriteFrame(baseFrame)
+                            .opacity(1 - blend)
+                        spriteFrame(nextFrame)
+                            .opacity(blend)
+                    }
+                }
+            } else {
+                spriteFrame(0)
+            }
+        }
+        .clipped()
+    }
+
+    private func spriteFrame(_ index: Int) -> some View {
+        GeometryReader { proxy in
+            Image(asset)
+                .resizable()
+                .interpolation(.high)
+                .frame(
+                    width: proxy.size.width,
+                    height: proxy.size.height * CGFloat(frameCount)
+                )
+                .offset(y: -proxy.size.height * CGFloat(index))
+        }
     }
 }
 
@@ -592,9 +1163,9 @@ private struct KakaCarouselSection: View {
             .padding(.bottom, 20 * scale)
 
             HStack(spacing: 5 * scale) {
-                ForEach(items) { appearance in
+                ForEach(0..<3, id: \.self) { page in
                     Circle()
-                        .fill(selection == appearance ? Color(red: 0.02, green: 0.78, blue: 0.81) : Color.white.opacity(0.88))
+                        .fill(page == currentPage ? Color(red: 0.02, green: 0.78, blue: 0.81) : Color.white.opacity(0.88))
                         .frame(width: 8 * scale, height: 8 * scale)
                 }
             }
@@ -607,6 +1178,11 @@ private struct KakaCarouselSection: View {
                 store.selectKaka(newValue)
             }
         }
+    }
+
+    private var currentPage: Int {
+        guard let selection, let index = items.firstIndex(of: selection) else { return 0 }
+        return min(index / 3, 2)
     }
 
     private func cardGradient(color: Color) -> LinearGradient {

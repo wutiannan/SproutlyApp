@@ -43,21 +43,27 @@ private struct GardenPreview<Content: View>: View {
     }
 }
 
-#Preview("05 · 社区") {
-    GardenPreview {
-        FigmaCommunityView()
-    }
-}
-
-#Preview("06 · 我的") {
+#Preview("05 · 我的") {
     GardenPreview {
         FigmaProfileView()
     }
 }
 
-#Preview("07 · 完整 App") {
+#Preview("06 · 完整 App") {
     GardenPreview {
         MainTabView()
+    }
+}
+
+#Preview("07 · 数据记录") {
+    GardenPreview {
+        GrowthRecordsFlowView {}
+    }
+}
+
+#Preview("09 · 家长管理") {
+    GardenPreview {
+        ParentCenterFlowView(initiallyVerified: true) {}
     }
 }
 #endif

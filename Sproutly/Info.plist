@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>用于在真实空间中放置和观察疗愈花园。</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>用于验证家长身份并保护儿童资料与隐私设置。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>用于听取你的歌声、驱动音乐音波，并在 AR 世界中接收语音指令。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

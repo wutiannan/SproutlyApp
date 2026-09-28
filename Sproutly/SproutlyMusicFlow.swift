@@ -14,11 +14,13 @@ import UIKit
 import Vision
 
 struct FigmaMusicView: View {
+    var onContentReady: () -> Void = {}
     var onGuidanceFlowChanged: (Bool) -> Void = { _ in }
 
     @EnvironmentObject private var store: GardenStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var player = AdaptiveMusicPlayer()
+    @StateObject private var homepageVideo = MusicHomepageVideoController()
     @StateObject private var camera = MusicCameraController()
 
     @State private var step: MusicFlowStep = .world
@@ -26,21 +28,26 @@ struct FigmaMusicView: View {
     @State private var selectedArtworkIndex: Int
     @State private var selectedColorIndex = 0
     @State private var coloredImages: [UIImage?]
-    @State private var colorAssignments: [[UInt8: UIColor]]
+    @State private var colorAssignments: [[UInt16: UIColor]]
     @State private var colorProfile: MindfulColorProfile
-    @State private var beforeMood: MusicWorld?
     @State private var afterMood: MusicWorld?
     @State private var capturedPhoto: UIImage?
     @State private var faceCrop: UIImage?
+    @State private var completedArtworkSnapshot: UIImage?
+    @State private var completedCardID = UUID()
     @State private var showsAudioNotice = false
     @State private var holdProgress: CGFloat = 0
     @State private var holdSucceeded = false
     @State private var sessionStartedAt = Date()
     @State private var sessionCompletedAt: Date?
     @State private var elapsedSeconds = 0
-    @State private var showsSaveConfirmation = false
-    @State private var pendingSessionDetails: MusicSessionDetails?
     @State private var showsColoringGuide = true
+    @State private var sessionAudioName: String?
+    @State private var compositionDuration: TimeInterval = 0
+    @State private var audioCommitted = false
+    @State private var showsExitColoringPrompt = false
+    @State private var musicIsReady = false
+    @State private var didReportContentReady = false
 
     private let outlineAssets = ["music313_outline"]
     private let regionAssets = ["music313_regions"]
@@ -59,7 +66,11 @@ struct FigmaMusicView: View {
         UIColor(red: 0xD9 / 255, green: 0xC4 / 255, blue: 0x9A / 255, alpha: 1)
     ]
 
-    init(onGuidanceFlowChanged: @escaping (Bool) -> Void = { _ in }) {
+    init(
+        onContentReady: @escaping () -> Void = {},
+        onGuidanceFlowChanged: @escaping (Bool) -> Void = { _ in }
+    ) {
+        self.onContentReady = onContentReady
         self.onGuidanceFlowChanged = onGuidanceFlowChanged
         let draft = MusicColorDraftStore.load(artworkCount: 1)
         let restoredAssignments = draft.assignments
@@ -106,13 +117,6 @@ struct FigmaMusicView: View {
                         cameraScreen(scale: scale)
                     case .review:
                         photoReviewScreen(scale: scale)
-                    case .beforeEmotion:
-                        emotionScreen(
-                            selection: $beforeMood,
-                            scale: scale
-                        )
-                    case .coloring:
-                        coloringScreen(scale: scale)
                     case .afterEmotion:
                         emotionScreen(
                             selection: $afterMood,
@@ -125,16 +129,6 @@ struct FigmaMusicView: View {
                 .frame(width: 402 * scale, height: 874 * scale)
                 .clipped()
                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.992)))
-
-                if showsSaveConfirmation {
-                    MusicSaveConfirmationOverlay(
-                        scale: scale,
-                        viewRecord: openSavedRecord,
-                        dismiss: returnToMusicHome
-                    )
-                    .frame(width: 402 * scale, height: 874 * scale)
-                    .zIndex(100)
-                }
             }
             .frame(
                 width: proxy.size.width,
@@ -147,14 +141,27 @@ struct FigmaMusicView: View {
         .onAppear {
             onGuidanceFlowChanged(true)
             player.prepare()
-            if !player.play(selectedWorld) {
+            musicIsReady = player.play(selectedWorld)
+            if !musicIsReady {
                 showsAudioNotice = true
             }
+            reportContentReadyIfPossible()
         }
         .onChange(of: selectedWorld) { _, world in
-            if !player.play(world) {
+            musicIsReady = player.play(world)
+            if !musicIsReady {
                 showsAudioNotice = true
             }
+            reportContentReadyIfPossible()
+        }
+        .onChange(of: homepageVideo.isReady) { _, _ in
+            reportContentReadyIfPossible()
+        }
+        .onChange(of: homepageVideo.activeWorld) { _, _ in
+            reportContentReadyIfPossible()
+        }
+        .onChange(of: reduceMotion) { _, _ in
+            reportContentReadyIfPossible()
         }
         .onChange(of: selectedArtworkIndex) { _, index in
             guard regionAssets.indices.contains(index),
@@ -177,23 +184,74 @@ struct FigmaMusicView: View {
                 for: UIApplication.didBecomeActiveNotification
             )
         ) { _ in
-            guard step == .camera else { return }
-            Task { await camera.start() }
+            if step == .camera {
+                Task { await camera.start() }
+            } else {
+                player.resumeAfterInterruption()
+            }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.willResignActiveNotification
+            )
+        ) { _ in
+            player.pauseForInterruption()
+        }
+        .onChange(of: player.didReachRecordingLimit) { _, reachedLimit in
+            guard reachedLimit, step == .artwork else { return }
+            finalizeComposition()
+            saveDraft()
+            move(to: .camera)
         }
         .onDisappear {
             camera.stop()
+            if !audioCommitted {
+                MusicSessionAudioStore.delete(sessionAudioName)
+            }
             player.stop()
             onGuidanceFlowChanged(false)
         }
-        .alert("已切换为离线舒缓音乐", isPresented: $showsAudioNotice) {
+        .alert("暂时无法播放音乐", isPresented: $showsAudioNotice) {
             Button("知道了", role: .cancel) {}
         } message: {
-            Text("当前网络音乐暂不可用，填色和音乐调节仍可继续。")
+            Text("请检查设备媒体音量后重试，填色功能仍可继续使用。")
+        }
+        .confirmationDialog(
+            "要保存这次填色草稿吗？",
+            isPresented: $showsExitColoringPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("保存草稿") {
+                saveDraft()
+                player.discardRecording()
+                compositionDuration = 0
+                move(to: .world)
+            }
+            Button("不保存", role: .destructive) {
+                player.discardRecording()
+                MusicColorDraftStore.clear()
+                colorAssignments = Array(repeating: [:], count: outlineAssets.count)
+                coloredImages = Array(repeating: nil, count: outlineAssets.count)
+                colorProfile = .empty
+                compositionDuration = 0
+                move(to: .world)
+            }
+            Button("继续创作", role: .cancel) {}
         }
     }
 
     private var completion: Double {
         colorProfile.coloredFraction
+    }
+
+    private func reportContentReadyIfPossible() {
+        guard !didReportContentReady,
+              musicIsReady,
+              homepageVideo.activeWorld == selectedWorld,
+              (homepageVideo.isReady || reduceMotion)
+        else { return }
+        didReportContentReady = true
+        onContentReady()
     }
 
     private func move(to destination: MusicFlowStep, animated: Bool = true) {
@@ -211,10 +269,15 @@ struct FigmaMusicView: View {
     }
 
     private func resetSession() {
-        beforeMood = nil
+        if !audioCommitted {
+            MusicSessionAudioStore.delete(sessionAudioName)
+        }
+        player.discardRecording()
         afterMood = nil
         capturedPhoto = nil
         faceCrop = nil
+        completedArtworkSnapshot = nil
+        completedCardID = UUID()
         colorAssignments = Array(repeating: [:], count: outlineAssets.count)
         coloredImages = Array(repeating: nil, count: outlineAssets.count)
         colorProfile = .empty
@@ -224,8 +287,11 @@ struct FigmaMusicView: View {
         holdSucceeded = false
         sessionCompletedAt = nil
         elapsedSeconds = 0
-        pendingSessionDetails = nil
         showsColoringGuide = true
+        sessionAudioName = nil
+        compositionDuration = 0
+        audioCommitted = false
+        sessionStartedAt = Date()
         move(to: .world)
     }
 
@@ -237,25 +303,49 @@ struct FigmaMusicView: View {
     }
 
     private func finishSession(with mood: MusicWorld) {
-        beforeMood = mood
+        if sessionAudioName == nil {
+            finalizeComposition()
+        }
         afterMood = mood
         let completedAt = Date()
         sessionCompletedAt = completedAt
-        elapsedSeconds = max(1, Int(completedAt.timeIntervalSince(sessionStartedAt)))
-        let faceName = faceCrop.flatMap(MusicFaceSnapshotStore.save)
+        elapsedSeconds = max(
+            1,
+            Int(
+                compositionDuration > 0
+                    ? compositionDuration.rounded()
+                    : completedAt.timeIntervalSince(sessionStartedAt).rounded()
+            )
+        )
+        let faceName = store.parentPreferences.retainEmotionPhotos
+            ? faceCrop.flatMap(MusicFaceSnapshotStore.save)
+            : nil
+        let artwork = renderCompletedArtwork()
+        completedArtworkSnapshot = artwork
+        completedCardID = UUID()
+        let artworkName = artwork.flatMap(MusicArtworkSnapshotStore.save)
         let details = MusicSessionDetails(
             world: selectedWorld.title,
-            beforeMood: mood.title,
-            afterMood: mood.title,
+            beforeMood: selectedWorld.checkInTitle,
+            afterMood: mood.checkInTitle,
             completion: completion,
             dominantHue: colorProfile.dominantHue,
             meanSaturation: colorProfile.meanSaturation,
             warmProportion: colorProfile.warmProportion,
             artworkIndex: selectedArtworkIndex,
             faceImageName: faceName,
-            durationSeconds: elapsedSeconds
+            artworkImageName: artworkName,
+            moodColorHexes: resultMoodColorHexes,
+            durationSeconds: elapsedSeconds,
+            audioFileName: sessionAudioName
         )
-        pendingSessionDetails = details
+        store.recordEmotion(
+            mood.recordEmotion,
+            source: .musicReflection,
+            at: completedAt,
+            musicSession: details
+        )
+        audioCommitted = true
         move(to: .result)
     }
 
@@ -263,35 +353,24 @@ struct FigmaMusicView: View {
         guard !holdSucceeded else { return }
         holdSucceeded = true
         holdProgress = 1
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-        AudioServicesPlaySystemSound(1025)
+        if store.parentPreferences.hapticsEnabled {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            AudioServicesPlaySystemSound(1025)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
             finishSession(with: mood)
         }
     }
 
     private func returnToMusicHome() {
-        showsSaveConfirmation = false
         MusicColorDraftStore.clear()
+        sessionAudioName = nil
         resetSession()
     }
 
-    private func saveCompletedSession() {
-        guard let pendingSessionDetails, let mood = afterMood else { return }
-        store.recordEmotion(
-            mood.recordEmotion,
-            source: .musicReflection,
-            musicSession: pendingSessionDetails
-        )
-        self.pendingSessionDetails = nil
-        withAnimation(.easeOut(duration: reduceMotion ? 0.01 : 0.20)) {
-            showsSaveConfirmation = true
-        }
-    }
-
     private func openSavedRecord() {
-        showsSaveConfirmation = false
         MusicColorDraftStore.clear()
+        sessionAudioName = nil
         resetSession()
         store.requestedProfilePage = 2
         store.selectedTab = .profile
@@ -303,8 +382,6 @@ private enum MusicFlowStep: Hashable {
     case artwork
     case camera
     case review
-    case beforeEmotion
-    case coloring
     case afterEmotion
     case result
 }
@@ -348,6 +425,51 @@ private enum MusicWorld: Int, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    var homepageBackgroundAsset: String {
+        switch self {
+        case .happy: "music_home_background_happy"
+        case .calm: "music_home_background_calm"
+        case .low: "music_home_background_sad"
+        case .angry: "music_home_background_angry"
+        case .tense: "music_home_background_afraid"
+        }
+    }
+
+    var homepageVideoResource: String {
+        switch self {
+        case .happy: "music_home_video_happy"
+        case .calm: "music_home_video_calm"
+        case .low: "music_home_video_low"
+        case .angry: "music_home_video_angry"
+        case .tense: "music_home_video_tense"
+        }
+    }
+
+    var homepageOrbAsset: String {
+        switch self {
+        case .happy: "music_home_orb_happy"
+        case .calm: "music_home_orb_calm"
+        case .low: "music_home_orb_sad"
+        case .angry: "music_home_orb_angry"
+        case .tense: "music_home_orb_afraid"
+        }
+    }
+
+    var homepageOverlayTopColor: Color {
+        switch self {
+        case .happy:
+            Color(red: 1, green: 240 / 255, blue: 195 / 255).opacity(0.30)
+        case .calm:
+            Color(red: 17 / 255, green: 164 / 255, blue: 1).opacity(0.30)
+        case .low:
+            Color(red: 195 / 255, green: 1, blue: 249 / 255).opacity(0.30)
+        case .angry:
+            Color(red: 1, green: 195 / 255, blue: 196 / 255).opacity(0.30)
+        case .tense:
+            Color(red: 206 / 255, green: 195 / 255, blue: 1).opacity(0.30)
+        }
+    }
+
     var checkInAsset: String {
         switch self {
         case .happy: "music_checkin_happy"
@@ -355,6 +477,16 @@ private enum MusicWorld: Int, CaseIterable, Identifiable, Hashable {
         case .low: "music_checkin_low"
         case .angry: "music_checkin_angry"
         case .tense: "music_checkin_tense"
+        }
+    }
+
+    var checkInHaloColor: Color {
+        switch self {
+        case .happy: Color(red: 241 / 255, green: 215 / 255, blue: 120 / 255)
+        case .calm: Color(red: 143 / 255, green: 214 / 255, blue: 201 / 255)
+        case .low: Color(red: 148 / 255, green: 170 / 255, blue: 218 / 255)
+        case .angry: Color(red: 228 / 255, green: 163 / 255, blue: 172 / 255)
+        case .tense: Color(red: 197 / 255, green: 174 / 255, blue: 217 / 255)
         }
     }
 
@@ -388,7 +520,8 @@ private enum MusicWorld: Int, CaseIterable, Identifiable, Hashable {
     }
 
     var fallbackResource: String {
-        "music_fallback_\(String(describing: self))"
+        // 统一使用一段完整的纯器乐曲，情绪差异由速度、音高和空间感调整。
+        "music_base_classical_vibes_2"
     }
 
     var accent: Color {
@@ -478,14 +611,13 @@ private enum MusicWorld: Int, CaseIterable, Identifiable, Hashable {
 private extension FigmaMusicView {
     func worldScreen(scale: CGFloat) -> some View {
         ZStack {
-            MusicWorldBackdrop(world: selectedWorld)
-                .frame(width: 402 * scale, height: 874 * scale)
-
-            LinearGradient(
-                colors: [.clear, Color.black.opacity(0.04), Color.black.opacity(0.34)],
-                startPoint: .top,
-                endPoint: .bottom
+            MusicHomepageBackdrop(
+                world: selectedWorld,
+                controller: homepageVideo,
+                isActive: true,
+                reduceMotion: reduceMotion
             )
+                .frame(width: 402 * scale, height: 874 * scale)
 
             Button {
                 store.selectedTab = .garden
@@ -509,7 +641,12 @@ private extension FigmaMusicView {
             .position(x: 201 * scale, y: 307 * scale)
             .accessibilityLabel("\(selectedWorld.title)情绪球")
 
-            AnimatedWaveform(mood: selectedWorld.motionMood)
+            AnimatedWaveform(
+                mood: selectedWorld.motionMood,
+                gradient: selectedWorld == .tense
+                    ? Array(selectedWorld.orbColors.dropLast())
+                    : nil
+            )
                 .frame(width: 402 * scale, height: 83 * scale)
                 .position(x: 201 * scale, y: 711 * scale)
 
@@ -562,7 +699,12 @@ private extension FigmaMusicView {
 
     func artworkScreen(scale: CGFloat) -> some View {
         ZStack {
-            MusicWorldBackdrop(world: selectedWorld)
+            MusicHomepageBackdrop(
+                world: selectedWorld,
+                controller: homepageVideo,
+                isActive: false,
+                reduceMotion: reduceMotion
+            )
                 .frame(width: 402 * scale, height: 874 * scale)
                 .blur(radius: 5 * scale)
                 .scaleEffect(1.03)
@@ -590,7 +732,11 @@ private extension FigmaMusicView {
             coloringKakaGuide(scale: scale)
 
             Button {
-                move(to: .world)
+                if player.hasActiveRecording {
+                    showsExitColoringPrompt = true
+                } else {
+                    move(to: .world)
+                }
             } label: {
                 Image("music_artwork_back")
                     .resizable()
@@ -626,10 +772,16 @@ private extension FigmaMusicView {
             .position(x: 98.87 * scale, y: 809 * scale)
 
             MusicArtworkEntryButton(scale: scale) {
+                guard completion >= 0.70 else { return }
+                finalizeComposition()
+                saveDraft()
                 move(to: .camera)
             }
+            .disabled(completion < 0.70)
+            .opacity(completion >= 0.70 ? 1 : 0.46)
             .position(x: 315.16 * scale, y: 809 * scale)
             .zIndex(20)
+            .accessibilityHint("当前已完成 \(Int(completion * 100))%，达到百分之七十后可继续拍照")
         }
     }
 
@@ -828,7 +980,7 @@ private extension FigmaMusicView {
                 Button {
                     guard capturedPhoto != nil else { return }
                     withAnimation(.easeOut(duration: reduceMotion ? 0.01 : 0.28)) {
-                        step = .beforeEmotion
+                        step = .afterEmotion
                     }
                 } label: {
                     Label("使用照片", systemImage: "checkmark")
@@ -949,7 +1101,9 @@ private extension FigmaMusicView {
 
             ForEach(Array(MusicWorld.allCases.enumerated()), id: \.element.id) { index, world in
                 Button {
-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    if ParentComfortRuntime.hapticsEnabled {
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    }
                     holdProgress = 0
                     holdSucceeded = false
                     withAnimation(.easeOut(duration: reduceMotion ? 0.01 : 0.22)) {
@@ -1112,83 +1266,6 @@ private extension FigmaMusicView {
         .accessibilityElement(children: .combine)
     }
 
-    func coloringScreen(scale: CGFloat) -> some View {
-        ZStack {
-            MusicWorldBackdrop(world: selectedWorld)
-                .frame(width: 402 * scale, height: 874 * scale)
-                .blur(radius: 5 * scale)
-                .scaleEffect(1.03)
-
-            RoundedRectangle(cornerRadius: 24 * scale, style: .continuous)
-                .fill(Color(red: 0.969, green: 0.984, blue: 0.973).opacity(0.96))
-                .frame(width: 354.25 * scale, height: 505.18 * scale)
-                .shadow(color: Color(red: 0.10, green: 0.28, blue: 0.29).opacity(0.09), radius: 14 * scale, y: 4 * scale)
-                .position(x: 201 * scale, y: 379.34 * scale)
-
-            MusicColoringPager(
-                outlineAssets: outlineAssets,
-                regionAssets: regionAssets,
-                selectedColor: palette[selectedColorIndex],
-                onRegionFilled: handleRegionFilled,
-                onCanvasTapped: dismissColoringGuide,
-                selectedIndex: $selectedArtworkIndex,
-                coloredImages: $coloredImages,
-                colorAssignments: $colorAssignments
-            )
-            .frame(width: 337.48 * scale, height: 488.41 * scale)
-            .clipShape(RoundedRectangle(cornerRadius: 20 * scale, style: .continuous))
-            .position(x: 201 * scale, y: 379.34 * scale)
-
-            coloringKakaGuide(scale: scale)
-
-            Button {
-                saveDraft()
-                move(to: .beforeEmotion)
-            } label: {
-                Image("music_artwork_back")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 48 * scale, height: 48 * scale)
-                    .musicGlossCircle(scale: scale)
-            }
-            .buttonStyle(.plain)
-            .position(x: 48 * scale, y: 84 * scale)
-            .accessibilityLabel("返回心情选择")
-
-            Image("music_artwork_title")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 42.4 * scale, height: 41.1 * scale)
-                .position(x: 201 * scale, y: 80 * scale)
-
-            MusicPaletteStrip(
-                colors: palette,
-                selectedIndex: $selectedColorIndex,
-                scale: scale
-            )
-            .frame(width: 354 * scale, height: 64 * scale)
-            .position(x: 201 * scale, y: 717.84 * scale)
-
-            MusicPlaybackPill(
-                world: selectedWorld,
-                level: player.level,
-                isOnline: player.isOnline,
-                scale: scale
-            )
-            .frame(width: 150 * scale, height: 48 * scale)
-            .position(x: 98.87 * scale, y: 809 * scale)
-
-            MusicArtworkEntryButton(scale: scale) {
-                guard completion >= 0.70 else { return }
-                move(to: .afterEmotion)
-            }
-            .disabled(completion < 0.70)
-            .opacity(completion >= 0.70 ? 1 : 0.46)
-            .position(x: 315.16 * scale, y: 809 * scale)
-            .accessibilityHint("当前已完成 \(Int(completion * 100))%，达到百分之七十后可继续")
-        }
-    }
-
     @ViewBuilder
     private func coloringKakaGuide(scale: CGFloat) -> some View {
         if showsColoringGuide {
@@ -1231,6 +1308,9 @@ private extension FigmaMusicView {
         regionFraction: CGFloat,
         profile: MindfulColorProfile
     ) {
+        if !player.hasActiveRecording {
+            sessionStartedAt = Date()
+        }
         colorProfile = profile
         player.respondToColoring(
             color: color,
@@ -1244,145 +1324,52 @@ private extension FigmaMusicView {
         }
     }
 
+    private func finalizeComposition() {
+        guard sessionAudioName == nil,
+              let recording = player.finishRecording() else { return }
+        sessionAudioName = recording.name
+        compositionDuration = recording.duration
+    }
+
     func resultScreen(scale: CGFloat) -> some View {
         let date = sessionCompletedAt ?? Date()
-        let dateParts = resultDateParts(for: date)
-        let month = dateParts.month
-        let day = dateParts.day
-
+        let checkedInMood = afterMood ?? selectedWorld
+        let data = EmotionMusicCardPresentation(
+            id: completedCardID,
+            artwork: completedArtworkSnapshot ?? renderCompletedArtwork(),
+            fallbackArtworkAsset: "profile_emotion_artwork",
+            face: faceCrop,
+            fallbackFaceAsset: "profile_emotion_avatar",
+            moodAsset: checkedInMood.checkInAsset,
+            avatarHaloColor: checkedInMood.checkInHaloColor,
+            timestamp: date,
+            theme: selectedWorld.diaryTitle,
+            durationSeconds: elapsedSeconds,
+            moodColors: resultMoodColors,
+            reflection: selectedWorld.diaryReflection
+        )
         return ZStack {
-            completedArtwork(contentMode: .fill)
-                .frame(width: 577.153 * scale, height: 875.563 * scale)
-                .clipped()
-                .position(x: 201 * scale, y: 436.22 * scale)
+            EmotionMusicRecordScene(
+                data: data,
+                showsCardStack: false,
+                cardScale: 0.86,
+                cardCenterY: 421
+            )
 
-            Color(red: 112 / 255, green: 142 / 255, blue: 142 / 255)
-                .opacity(0.88)
+            Text("乐卡已保存")
+                .gardenFont(size: 14 * scale, weight: .bold)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 18 * scale)
+                .frame(height: 38 * scale)
+                .background(.black.opacity(0.18), in: Capsule())
+                .position(x: 201 * scale, y: 77 * scale)
 
-            Image("music_result_botanical_left")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 96 * scale, height: 250 * scale)
-                .position(x: 36 * scale, y: 275 * scale)
-
-            Image("music_result_botanical_right")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 96 * scale, height: 250 * scale)
-                .rotationEffect(.degrees(180))
-                .position(x: 270 * scale, y: 405 * scale)
-
-            RoundedRectangle(cornerRadius: 10 * scale, style: .continuous)
-                .fill(Color(red: 1, green: 0.992, blue: 0.976))
-                .frame(width: 338 * scale, height: 656 * scale)
-                .shadow(
-                    color: Color(red: 31 / 255, green: 56 / 255, blue: 56 / 255).opacity(0.12),
-                    radius: 7 * scale,
-                    y: 5 * scale
-                )
-                .position(x: 200.66 * scale, y: 455 * scale)
-
-            Image("music_result_paper_texture")
-                .resizable()
-                .scaledToFill()
-                .frame(width: 338 * scale, height: 656 * scale)
-                .blendMode(.multiply)
-                .clipShape(RoundedRectangle(cornerRadius: 10 * scale, style: .continuous))
-                .position(x: 200.66 * scale, y: 455 * scale)
-
-            resultAudioSummary(scale: scale)
-                .frame(width: 302 * scale, height: 74 * scale)
-                .position(x: 200.66 * scale, y: 164 * scale)
-
-            RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
-                .fill(Color(red: 203 / 255, green: 207 / 255, blue: 242 / 255))
-                .frame(width: 302 * scale, height: 397.363 * scale)
-                .rotationEffect(.degrees(-1.2))
-                .position(x: 202.13 * scale, y: 393.95 * scale)
-
-            RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
-                .fill(.white)
-                .frame(width: 286 * scale, height: 381.808 * scale)
-                .shadow(color: Color.black.opacity(0.10), radius: 4 * scale, y: 3 * scale)
-                .position(x: 202.13 * scale, y: 394 * scale)
-
-            completedArtwork(contentMode: .fill)
-                .frame(width: 268.506 * scale, height: 363.621 * scale)
-                .clipShape(RoundedRectangle(cornerRadius: 8 * scale, style: .continuous))
-                .position(x: 202.13 * scale, y: 393.5 * scale)
-
-            resultTape(width: 60, scale: scale)
-                .rotationEffect(.degrees(-46.2))
-                .position(x: 64.5 * scale, y: 213.8 * scale)
-            resultTape(width: 60, scale: scale)
-                .rotationEffect(.degrees(43.8))
-                .position(x: 339.1 * scale, y: 206.1 * scale)
-            resultTape(width: 60, scale: scale)
-                .rotationEffect(.degrees(43.8))
-                .position(x: 64.5 * scale, y: 584 * scale)
-            resultTape(width: 60, scale: scale)
-                .rotationEffect(.degrees(-46.2))
-                .position(x: 339.1 * scale, y: 580.5 * scale)
-
-            resultStamp(month: month, day: day, scale: scale)
-                .frame(width: 69.334 * scale, height: 69.334 * scale)
-                .rotationEffect(.degrees(-1.2))
-                .position(x: 311.43 * scale, y: 232.03 * scale)
-
-            resultRecordInfo(date: date, scale: scale)
-                .frame(width: 288 * scale, height: 58 * scale)
-                .position(x: 208.58 * scale, y: 642.38 * scale)
-
-            ZStack(alignment: .topLeading) {
-                Image("music_result_note")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 294 * scale, height: 92.5 * scale)
-                    .offset(x: 4 * scale, y: 4.42 * scale)
-
-                Image("music_result_handprint")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 34 * scale, height: 48 * scale)
-                    .offset(x: 18 * scale, y: 25.46 * scale)
-
-                VStack(alignment: .leading, spacing: 4 * scale) {
-                    Text("今天情绪小记")
-                        .gardenFont(size: 16 * scale, weight: .bold)
-                    Text(selectedWorld.diaryReflection)
-                        .font(.system(size: 14 * scale))
-                        .lineSpacing(2 * scale)
-                }
-                .foregroundStyle(Color(red: 49 / 255, green: 91 / 255, blue: 93 / 255))
-                .frame(width: 210 * scale, alignment: .leading)
-                .offset(x: 65.87 * scale, y: 14.42 * scale)
-            }
-            .frame(width: 302 * scale, height: 120 * scale, alignment: .topLeading)
-            .position(x: 200.66 * scale, y: 733.54 * scale)
-
-            MusicResultConfirmButton(scale: scale) {
-                saveCompletedSession()
-            }
-            .position(x: 208.58 * scale, y: 817.54 * scale)
-
-            Image("music_result_progress")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 58 * scale, height: 18 * scale)
-                .position(x: 201 * scale, y: 76 * scale)
-
-            Button {
-                move(to: .beforeEmotion)
-            } label: {
-                Image("music_result_back")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 48 * scale, height: 48 * scale)
-                    .musicGlossCircle(scale: scale)
-            }
-            .buttonStyle(.plain)
-            .position(x: 48 * scale, y: 84 * scale)
-            .accessibilityLabel("返回心情选择")
+            EmotionMusicRecordButtons(
+                scale: scale,
+                openAlbum: openSavedRecord,
+                returnHome: returnToMusicHome
+            )
+            .position(x: 201 * scale, y: 800 * scale)
         }
     }
 
@@ -1405,143 +1392,51 @@ private extension FigmaMusicView {
         }
     }
 
-    func resultAudioSummary(scale: CGFloat) -> some View {
-        ZStack(alignment: .leading) {
-            MusicSpectrumWave(world: selectedWorld, level: player.level)
-                .frame(width: 220 * scale, height: 26 * scale)
-                .offset(x: 68 * scale)
-
-            ZStack {
-                Circle()
-                    .fill(.white.opacity(0.78))
-                    .frame(width: 60 * scale, height: 60 * scale)
-                if let faceCrop {
-                    Image(uiImage: faceCrop)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 50 * scale, height: 50 * scale)
-                        .clipShape(Circle())
-                } else {
-                    Image(systemName: "person.crop.circle.fill")
-                        .resizable()
-                        .foregroundStyle(.white)
-                        .frame(width: 50 * scale, height: 50 * scale)
-                }
-                Image(selectedWorld.checkInAsset)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 28 * scale, height: 28 * scale)
-                    .offset(x: 19 * scale, y: 19 * scale)
+    func renderCompletedArtwork() -> UIImage? {
+        guard outlineAssets.indices.contains(selectedArtworkIndex),
+              let outline = UIImage(named: outlineAssets[selectedArtworkIndex]) else {
+            return coloredImages.indices.contains(selectedArtworkIndex)
+                ? coloredImages[selectedArtworkIndex]
+                : nil
+        }
+        let targetSize = outline.size
+        guard targetSize.width > 0, targetSize.height > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: targetSize, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: targetSize))
+            if coloredImages.indices.contains(selectedArtworkIndex),
+               let colored = coloredImages[selectedArtworkIndex] {
+                colored.draw(in: CGRect(origin: .zero, size: targetSize))
             }
+            outline.draw(in: CGRect(origin: .zero, size: targetSize))
         }
-    }
-
-    func resultTape(width: CGFloat, scale: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
-            .fill(Color(red: 220 / 255, green: 231 / 255, blue: 227 / 255))
-            .opacity(0.72)
-            .frame(width: width * scale, height: 18 * scale)
-    }
-
-    func resultStamp(month: String, day: String, scale: CGFloat) -> some View {
-        ZStack {
-            Image("music_result_dashed_ring")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 58 * scale, height: 58 * scale)
-            VStack(spacing: 0) {
-                Text(month)
-                    .font(.system(size: 10 * scale))
-                Text(day)
-                    .font(.system(size: 14 * scale, weight: .medium))
-            }
-            .foregroundStyle(Color(red: 104 / 255, green: 102 / 255, blue: 176 / 255))
-        }
-    }
-
-    func resultRecordInfo(date: Date, scale: CGFloat) -> some View {
-        HStack(spacing: 8 * scale) {
-            resultInfoColumn(
-                title: "日期",
-                value: resultDateText(for: date),
-                width: 52,
-                scale: scale
-            )
-            resultInfoDivider(scale: scale)
-            resultInfoColumn(
-                title: "主题",
-                value: selectedWorld.diaryTitle,
-                width: 61,
-                scale: scale
-            )
-            resultInfoDivider(scale: scale)
-            resultInfoColumn(
-                title: "用时",
-                value: resultDurationText,
-                width: 52,
-                scale: scale
-            )
-            VStack(alignment: .leading, spacing: 4 * scale) {
-                Text("情绪主色彩")
-                    .gardenFont(size: 12 * scale, weight: .bold)
-                    .lineLimit(1)
-                HStack(spacing: 8 * scale) {
-                    ForEach(Array(resultMoodColors.enumerated()), id: \.offset) { _, color in
-                        Circle()
-                            .fill(color)
-                            .frame(width: 14 * scale, height: 14 * scale)
-                    }
-                }
-            }
-            .foregroundStyle(Color(red: 49 / 255, green: 91 / 255, blue: 93 / 255))
-            .frame(width: 62 * scale, height: 48 * scale, alignment: .leading)
-        }
-    }
-
-    func resultInfoColumn(
-        title: String,
-        value: String,
-        width: CGFloat,
-        scale: CGFloat
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 4 * scale) {
-            Text(title)
-                .gardenFont(size: 12 * scale, weight: .bold)
-                .foregroundStyle(Color(red: 89 / 255, green: 109 / 255, blue: 109 / 255))
-            Text(value)
-                .gardenFont(size: 12 * scale)
-                .foregroundStyle(Color(red: 49 / 255, green: 91 / 255, blue: 93 / 255))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-        .frame(width: width * scale, height: 48 * scale, alignment: .leading)
-    }
-
-    func resultInfoDivider(scale: CGFloat) -> some View {
-        Rectangle()
-            .fill(Color(red: 200 / 255, green: 191 / 255, blue: 175 / 255))
-            .frame(width: scale, height: 36 * scale)
-    }
-
-    func resultDateParts(for date: Date) -> (month: String, day: String) {
-        let calendar = Calendar.autoupdatingCurrent
-        let monthIndex = max(1, calendar.component(.month, from: date)) - 1
-        let month = calendar.shortMonthSymbols[monthIndex].uppercased()
-        return (month, String(calendar.component(.day, from: date)))
-    }
-
-    func resultDateText(for date: Date) -> String {
-        let parts = resultDateParts(for: date)
-        return "\(parts.month) \(parts.day)"
-    }
-
-    var resultDurationText: String {
-        String(format: "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
     }
 
     var resultMoodColors: [Color] {
+        resultMoodUIColors.map { Color(uiColor: $0) }
+    }
+
+    var resultMoodColorHexes: [String] {
+        resultMoodUIColors.compactMap { color in
+            var red: CGFloat = 0
+            var green: CGFloat = 0
+            var blue: CGFloat = 0
+            guard color.getRed(&red, green: &green, blue: &blue, alpha: nil) else { return nil }
+            return String(
+                format: "#%02X%02X%02X",
+                Int((red * 255).rounded()),
+                Int((green * 255).rounded()),
+                Int((blue * 255).rounded())
+            )
+        }
+    }
+
+    var resultMoodUIColors: [UIColor] {
         guard colorAssignments.indices.contains(selectedArtworkIndex) else {
-            return palette.prefix(3).map { Color(uiColor: $0) }
+            return Array(palette.prefix(3))
         }
         var unique: [UIColor] = []
         for color in colorAssignments[selectedArtworkIndex].values {
@@ -1552,7 +1447,7 @@ private extension FigmaMusicView {
             guard !unique.contains(where: { $0.isEqual(fallback) }) else { continue }
             unique.append(fallback)
         }
-        return unique.prefix(3).map { Color(uiColor: $0) }
+        return Array(unique.prefix(3))
     }
 
     func cycleWorld(by delta: Int) {
@@ -1576,6 +1471,216 @@ private struct MusicWorldBackdrop: View {
             .overlay(world.backgroundColor.opacity(0.08))
             .clipped()
             .accessibilityHidden(true)
+    }
+}
+
+private struct MusicHomepageBackdrop: View {
+    let world: MusicWorld
+    @ObservedObject var controller: MusicHomepageVideoController
+    let isActive: Bool
+    let reduceMotion: Bool
+    @Environment(\.scenePhase) private var scenePhase
+
+    private var playbackIsActive: Bool {
+        isActive && scenePhase == .active
+    }
+
+    var body: some View {
+        ZStack {
+            Image(world.homepageBackgroundAsset)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFill()
+
+            if isActive,
+               !reduceMotion,
+               controller.activeWorld == world,
+               let player = controller.player {
+                MusicHomepageVideoLayer(player: player) {
+                    controller.markReady(for: world)
+                }
+                    .opacity(controller.isReady ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.24), value: controller.isReady)
+            }
+
+            LinearGradient(
+                colors: [
+                    world.homepageOverlayTopColor,
+                    Color.white.opacity(0.30)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .clipped()
+        .accessibilityHidden(true)
+        .onAppear {
+            controller.update(
+                world: world,
+                isActive: playbackIsActive,
+                reduceMotion: reduceMotion
+            )
+        }
+        .onChange(of: world) { _, newWorld in
+            controller.update(
+                world: newWorld,
+                isActive: playbackIsActive,
+                reduceMotion: reduceMotion
+            )
+        }
+        .onChange(of: isActive) { _, active in
+            controller.update(
+                world: world,
+                isActive: active && scenePhase == .active,
+                reduceMotion: reduceMotion
+            )
+        }
+        .onChange(of: reduceMotion) { _, reduced in
+            controller.update(
+                world: world,
+                isActive: playbackIsActive,
+                reduceMotion: reduced
+            )
+        }
+        .onChange(of: scenePhase) { _, _ in
+            controller.update(
+                world: world,
+                isActive: playbackIsActive,
+                reduceMotion: reduceMotion
+            )
+        }
+        .onDisappear {
+            controller.update(
+                world: world,
+                isActive: false,
+                reduceMotion: reduceMotion
+            )
+        }
+    }
+}
+
+@MainActor
+private final class MusicHomepageVideoController: ObservableObject {
+    @Published private(set) var player: AVPlayer?
+    @Published private(set) var activeWorld: MusicWorld?
+    @Published private(set) var isReady = false
+
+    private var looper: AVPlayerLooper?
+    private var shouldPlay = false
+
+    func update(world: MusicWorld, isActive: Bool, reduceMotion: Bool) {
+        shouldPlay = isActive && !reduceMotion
+        if activeWorld != world {
+            prepare(world: world)
+        }
+
+        guard shouldPlay else {
+            player?.pause()
+            return
+        }
+        player?.playImmediately(atRate: 1)
+    }
+
+    func markReady(for world: MusicWorld) {
+        guard activeWorld == world else { return }
+        isReady = true
+    }
+
+    private func prepare(world: MusicWorld) {
+        looper = nil
+
+        player?.pause()
+        player = nil
+        isReady = false
+        activeWorld = world
+
+        guard let url = Bundle.main.url(
+            forResource: world.homepageVideoResource,
+            withExtension: "mp4"
+        ) else {
+            return
+        }
+
+        let item = AVPlayerItem(url: url)
+        let nextPlayer = AVQueuePlayer()
+        nextPlayer.isMuted = true
+        nextPlayer.automaticallyWaitsToMinimizeStalling = false
+        nextPlayer.actionAtItemEnd = .advance
+        looper = AVPlayerLooper(player: nextPlayer, templateItem: item)
+        player = nextPlayer
+
+        if shouldPlay {
+            nextPlayer.playImmediately(atRate: 1)
+        }
+    }
+}
+
+private struct MusicHomepageVideoLayer: UIViewRepresentable {
+    let player: AVPlayer
+    let onReadyForDisplay: () -> Void
+
+    func makeUIView(context: Context) -> MusicHomepageVideoView {
+        let view = MusicHomepageVideoView()
+        view.onReadyForDisplay = onReadyForDisplay
+        view.player = player
+        return view
+    }
+
+    func updateUIView(_ uiView: MusicHomepageVideoView, context: Context) {
+        uiView.onReadyForDisplay = onReadyForDisplay
+        uiView.player = player
+    }
+}
+
+private final class MusicHomepageVideoView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+
+    private var playerLayer: AVPlayerLayer {
+        layer as! AVPlayerLayer
+    }
+
+    var onReadyForDisplay: (() -> Void)? {
+        didSet { reportReadyFrameIfNeeded() }
+    }
+
+    private var readyObservation: NSKeyValueObservation?
+    private var hasReportedReadyFrame = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        playerLayer.backgroundColor = UIColor.clear.cgColor
+        readyObservation = playerLayer.observe(
+            \AVPlayerLayer.isReadyForDisplay,
+            options: [.initial, .new]
+        ) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.reportReadyFrameIfNeeded()
+            }
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    var player: AVPlayer? {
+        get { playerLayer.player }
+        set {
+            guard playerLayer.player !== newValue else { return }
+            hasReportedReadyFrame = false
+            playerLayer.player = newValue
+            playerLayer.videoGravity = .resizeAspectFill
+            reportReadyFrameIfNeeded()
+        }
+    }
+
+    private func reportReadyFrameIfNeeded() {
+        guard !hasReportedReadyFrame,
+              playerLayer.isReadyForDisplay,
+              let onReadyForDisplay else { return }
+        hasReportedReadyFrame = true
+        onReadyForDisplay()
     }
 }
 
@@ -1662,11 +1767,8 @@ private struct MusicInteractiveMoodOrb: View {
 
     private var orbSurface: some View {
         ZStack {
-            AnimatedMoodOrb(
-                asset: world.orbAsset,
-                frameDuration: world.motionMood.orbFrameDuration
-            )
-            .id(world.orbAsset)
+            MusicHomepageEmotionOrb(world: world)
+            .id(world.homepageOrbAsset)
             .transaction { transaction in
                 transaction.animation = nil
             }
@@ -1965,9 +2067,11 @@ private struct MusicInteractiveMoodOrb: View {
             }
             guard isTouching else { return }
 
-            let feedback = UIImpactFeedbackGenerator(style: .medium)
-            feedback.prepare()
-            feedback.impactOccurred(intensity: 0.72)
+            if ParentComfortRuntime.hapticsEnabled {
+                let feedback = UIImpactFeedbackGenerator(style: .medium)
+                feedback.prepare()
+                feedback.impactOccurred(intensity: 0.72)
+            }
             withAnimation(.timingCurve(0.12, 0.76, 0.18, 1, duration: 0.30)) {
                 dissolveProgress = 1
             }
@@ -2027,6 +2131,7 @@ private struct MusicInteractiveMoodOrb: View {
     }
 
     private func triggerSoftHaptic() {
+        guard ParentComfortRuntime.hapticsEnabled else { return }
         let feedback = UIImpactFeedbackGenerator(style: .soft)
         feedback.prepare()
         feedback.impactOccurred(intensity: 0.55)
@@ -2299,6 +2404,50 @@ private struct MusicMoodParticle: Identifiable {
     let hasLightStrand: Bool
 }
 
+private struct MusicHomepageEmotionOrb: View {
+    let world: MusicWorld
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let frameCount = 3
+
+    var body: some View {
+        TimelineView(
+            .animation(minimumInterval: 1 / 30, paused: reduceMotion)
+        ) { timeline in
+            let secondsPerFrame = world.motionMood.orbFrameDuration
+            let rawPhase = reduceMotion
+                ? 0
+                : timeline.date.timeIntervalSinceReferenceDate / secondsPerFrame
+            let baseFrame = Int(floor(rawPhase)) % frameCount
+            let nextFrame = (baseFrame + 1) % frameCount
+            let linearBlend = rawPhase - floor(rawPhase)
+            let blend = (1 - cos(.pi * linearBlend)) / 2
+
+            ZStack {
+                spriteFrame(baseFrame)
+                    .opacity(1 - blend)
+                spriteFrame(nextFrame)
+                    .opacity(blend)
+            }
+        }
+        .clipped()
+    }
+
+    private func spriteFrame(_ index: Int) -> some View {
+        GeometryReader { proxy in
+            Image(world.homepageOrbAsset)
+                .resizable()
+                .interpolation(.high)
+                .frame(
+                    width: proxy.size.width,
+                    height: proxy.size.height * CGFloat(frameCount)
+                )
+                .offset(y: -proxy.size.height * CGFloat(index))
+        }
+    }
+}
+
 private struct MusicOrbBodyParticle: Identifiable {
     let id = UUID()
     let origin: CGPoint
@@ -2402,12 +2551,19 @@ private extension MusicWorld {
                 [Color(red: 0.36, green: 0.32, blue: 0.94), Color(red: 0.33, green: 0.79, blue: 0.92), .white],
                 [Color(red: 0.56, green: 0.45, blue: 0.91), Color(red: 0.69, green: 0.66, blue: 0.93), .white]
             ]
-        case .angry, .tense:
+        case .angry:
             palettes = [
                 [Color(red: 1.00, green: 0.91, blue: 0.38), Color(red: 1.00, green: 0.72, blue: 0.42), .white],
                 [Color(red: 1.00, green: 0.82, blue: 0.16), Color(red: 1.00, green: 0.93, blue: 0.46), .white],
                 [Color(red: 1.00, green: 0.86, blue: 0.26), Color(red: 1.00, green: 0.66, blue: 0.54), .white],
                 [Color(red: 0.96, green: 0.92, blue: 0.72), Color(red: 1.00, green: 0.72, blue: 0.72), .white]
+            ]
+        case .tense:
+            palettes = [
+                [Color(red: 0.76, green: 0.52, blue: 0.98), Color(red: 0.43, green: 0.36, blue: 0.92), .white],
+                [Color(red: 0.62, green: 0.38, blue: 0.94), Color(red: 0.31, green: 0.25, blue: 0.80), .white],
+                [Color(red: 0.78, green: 0.42, blue: 0.96), Color(red: 0.96, green: 0.48, blue: 0.74), .white],
+                [Color(red: 0.45, green: 0.36, blue: 0.88), Color(red: 0.92, green: 0.52, blue: 0.78), .white]
             ]
         }
         return palettes[frame]
@@ -2615,7 +2771,9 @@ private struct MusicPaletteStrip: View {
                     HStack(spacing: 8 * scale) {
                         ForEach(colors.indices, id: \.self) { index in
                             Button {
-                                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                                if ParentComfortRuntime.hapticsEnabled {
+                                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                                }
                                 selectedIndex = index
                             } label: {
                                 Circle()
@@ -2821,41 +2979,7 @@ private struct MusicPlaybackPill: View {
     }
 }
 
-private struct MusicResultConfirmButton: View {
-    let scale: CGFloat
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10 * scale) {
-                Text("确认")
-                    .gardenFont(size: 20 * scale)
-                    .foregroundStyle(.white)
-                    .frame(width: 43 * scale, height: 42 * scale)
-                Image("music_result_next")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 28 * scale, height: 28 * scale)
-            }
-            .frame(width: 115 * scale, height: 48 * scale)
-            .background(
-                Color(red: 19 / 255, green: 92 / 255, blue: 102 / 255).opacity(0.20),
-                in: Capsule()
-            )
-            .shadow(
-                color: Color(red: 5 / 255, green: 56 / 255, blue: 61 / 255).opacity(0.18),
-                radius: 16 * scale,
-                y: 6 * scale
-            )
-            .musicGlossCapsule(scale: scale)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("保存本次情绪记录")
-    }
-}
-
-private extension View {
+extension View {
     func musicGlossCircle(scale: CGFloat) -> some View {
         overlay {
             Circle()
@@ -2910,66 +3034,6 @@ private extension View {
     }
 }
 
-private struct MusicSaveConfirmationOverlay: View {
-    let scale: CGFloat
-    let viewRecord: () -> Void
-    let dismiss: () -> Void
-
-    var body: some View {
-        ZStack {
-            Color(red: 17 / 255, green: 63 / 255, blue: 65 / 255)
-                .opacity(0.36)
-                .contentShape(Rectangle())
-
-            VStack(spacing: 14 * scale) {
-                ZStack {
-                    Circle()
-                        .fill(Color(red: 210 / 255, green: 246 / 255, blue: 232 / 255))
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 24 * scale, weight: .bold))
-                        .foregroundStyle(GardenTheme.deepMint)
-                }
-                .frame(width: 54 * scale, height: 54 * scale)
-
-                Text("记录已保存")
-                    .gardenFont(size: 21 * scale, weight: .bold)
-                    .foregroundStyle(Color(red: 49 / 255, green: 91 / 255, blue: 93 / 255))
-
-                Text("可前往“我的－情绪记录”查看本次作品与心情。")
-                    .gardenFont(size: 14 * scale)
-                    .foregroundStyle(Color(red: 89 / 255, green: 109 / 255, blue: 109 / 255))
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3 * scale)
-                    .frame(width: 244 * scale)
-
-                HStack(spacing: 12 * scale) {
-                    Button("知道了", action: dismiss)
-                        .gardenFont(size: 15 * scale, weight: .bold)
-                        .foregroundStyle(GardenTheme.deepMint)
-                        .frame(width: 116 * scale, height: 44 * scale)
-                        .background(.white, in: Capsule())
-                        .overlay(Capsule().stroke(GardenTheme.deepMint.opacity(0.25), lineWidth: scale))
-
-                    Button("前往查看", action: viewRecord)
-                        .gardenFont(size: 15 * scale, weight: .bold)
-                        .foregroundStyle(.white)
-                        .frame(width: 116 * scale, height: 44 * scale)
-                        .background(GardenTheme.deepMint, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.vertical, 24 * scale)
-            .frame(width: 306 * scale)
-            .background(
-                Color(red: 1, green: 0.992, blue: 0.976),
-                in: RoundedRectangle(cornerRadius: 20 * scale, style: .continuous)
-            )
-            .shadow(color: .black.opacity(0.18), radius: 20 * scale, y: 8 * scale)
-        }
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-    }
-}
-
 private struct MusicEmotionSymbol: View {
     let world: MusicWorld
     let scale: CGFloat
@@ -3011,54 +3075,161 @@ private struct MusicPetalBackdrop: View {
 private final class AdaptiveMusicPlayer: NSObject, ObservableObject {
     @Published private(set) var level: CGFloat = 0.12
     @Published private(set) var isOnline = false
+    @Published private(set) var recordingElapsed: TimeInterval = 0
+    @Published private(set) var didReachRecordingLimit = false
 
-    private struct RemoteChannel {
-        let player: AVQueuePlayer
-        let looper: AVPlayerLooper
-    }
+    private let engine = AVAudioEngine()
+    private let basePlayer = AVAudioPlayerNode()
+    private let melodyPlayer = AVAudioPlayerNode()
+    private let baseTimePitch = AVAudioUnitTimePitch()
+    private let masterMixer = AVAudioMixerNode()
+    private let colorMixer = AVAudioMixerNode()
+    private let equalizer = AVAudioUnitEQ(numberOfBands: 1)
+    private let reverb = AVAudioUnitReverb()
+    private let layerPlayers = (0..<5).map { _ in AVAudioPlayerNode() }
+    private let accentPlayers = (0..<6).map { _ in AVAudioPlayerNode() }
+    private let sampleRate = 44_100.0
+    private let maximumRecordingDuration: TimeInterval = 10 * 60
+    private let recordingLock = NSLock()
 
-    private var channels: [MusicWorld: RemoteChannel] = [:]
-    private var fallbackPlayer: AVAudioPlayer?
-    private var meterTimer: Timer?
+    private var baseBuffers: [MusicWorld: AVAudioPCMBuffer] = [:]
+    private var melodyBuffers: [MusicWorld: AVAudioPCMBuffer] = [:]
+    private var layerBuffers: [AVAudioPCMBuffer] = []
+    nonisolated(unsafe) private var recordingFile: AVAudioFile?
+    private var recordingName: String?
+    nonisolated(unsafe) private var recordedFrameCount: AVAudioFramePosition = 0
+    nonisolated(unsafe) private var recordingSampleRate = 44_100.0
+    private var tapFormat: AVAudioFormat?
+    private var tapInstalled = false
+    private var nextAccentVoice = 0
     private var activeWorld: MusicWorld?
     private var colorInfluence = 0.0
+    private var beatAnchor: TimeInterval = 0
+    private var pendingColorTask: Task<Void, Never>?
+    private var inactivityTask: Task<Void, Never>?
+    private var masterRampTask: Task<Void, Never>?
+    private var layerRampTask: Task<Void, Never>?
+    private var wasPlayingBeforeInterruption = false
+
+    var hasActiveRecording: Bool {
+        recordingLock.lock()
+        defer { recordingLock.unlock() }
+        return recordingFile != nil
+    }
+
+    override init() {
+        super.init()
+        guard let synthFormat else { return }
+
+        engine.attach(basePlayer)
+        engine.attach(melodyPlayer)
+        engine.attach(baseTimePitch)
+        engine.attach(masterMixer)
+        engine.attach(colorMixer)
+        engine.attach(equalizer)
+        engine.attach(reverb)
+        layerPlayers.forEach(engine.attach)
+        accentPlayers.forEach(engine.attach)
+
+        for player in layerPlayers {
+            engine.connect(player, to: colorMixer, format: synthFormat)
+        }
+        for player in accentPlayers {
+            engine.connect(player, to: colorMixer, format: synthFormat)
+        }
+        engine.connect(melodyPlayer, to: masterMixer, format: synthFormat)
+        engine.connect(colorMixer, to: masterMixer, format: synthFormat)
+        engine.connect(masterMixer, to: equalizer, format: synthFormat)
+        engine.connect(equalizer, to: reverb, format: synthFormat)
+        engine.connect(reverb, to: engine.mainMixerNode, format: synthFormat)
+
+        let band = equalizer.bands[0]
+        band.filterType = .lowPass
+        band.frequency = 7_600
+        band.bypass = false
+        reverb.loadFactoryPreset(.mediumHall)
+        reverb.wetDryMix = 34
+        colorMixer.outputVolume = 0.82
+        masterMixer.outputVolume = ParentComfortRuntime.musicVolume
+    }
 
     func prepare() {
+        // 五种情绪共用同一段基础器乐，只加载一次，避免在真机内存中重复展开 MP3。
+        if let buffer = MoodMusicPlayer.preloadedBaseBuffer ?? loadBaseBuffer(for: .calm) {
+            for world in MusicWorld.allCases {
+                baseBuffers[world] = buffer
+            }
+        }
         for world in MusicWorld.allCases {
-            _ = remoteChannel(for: world)
+            if let buffer = makeMelodyBuffer(for: world) {
+                melodyBuffers[world] = buffer
+            }
         }
     }
 
     @discardableResult
     func play(_ world: MusicWorld) -> Bool {
-        if activeWorld == world {
-            if let remote = channels[world]?.player,
-               remote.timeControlStatus != .playing {
-                configureAudioSession()
-                remote.playImmediately(atRate: targetRate(for: world))
+        do {
+            try configureAudioSession()
+            if activeWorld == world, engine.isRunning {
+                return true
             }
-            if fallbackPlayer?.isPlaying == false {
-                fallbackPlayer?.play()
+
+            stopNodes()
+            if engine.isRunning {
+                engine.stop()
             }
-            return channels[world] != nil || fallbackPlayer != nil
-        }
+            guard let baseBuffer = baseBuffers[world] ?? loadBaseBuffer(for: world) else {
+                return false
+            }
+            baseBuffers[world] = baseBuffer
 
-        configureAudioSession()
-        for channel in channels.values {
-            channel.player.pause()
-            channel.player.volume = 0
-        }
-        fallbackPlayer?.stop()
-        fallbackPlayer = makeFallbackPlayer(for: world)
-        fallbackPlayer?.play()
+            engine.disconnectNodeOutput(basePlayer)
+            engine.disconnectNodeOutput(baseTimePitch)
+            engine.connect(basePlayer, to: baseTimePitch, format: baseBuffer.format)
+            engine.connect(baseTimePitch, to: masterMixer, format: nil)
+            try installOutputTapIfNeeded()
 
-        let remote = remoteChannel(for: world)
-        remote?.player.volume = 0.58
-        remote?.player.playImmediately(atRate: targetRate(for: world))
-        activeWorld = world
-        colorInfluence = 0
-        startMetering()
-        return remote != nil || fallbackPlayer != nil
+            activeWorld = world
+            colorInfluence = 0
+            baseTimePitch.rate = baseRate(for: world)
+            baseTimePitch.pitch = basePitch(for: world)
+            basePlayer.volume = baseVolume(for: world)
+            equalizer.bands[0].frequency = baseFilterFrequency(for: world)
+            reverb.wetDryMix = baseReverbMix(for: world)
+            // 下载的器乐曲已经自带旋律，关闭合成旋律，避免两条旋律互相打架。
+            melodyPlayer.volume = 0
+            guard let melodyBuffer = melodyBuffers[world] ?? makeMelodyBuffer(for: world) else {
+                return false
+            }
+            melodyBuffers[world] = melodyBuffer
+            layerBuffers = (0..<5).compactMap {
+                makeLayerBuffer(family: $0, world: world)
+            }
+            guard layerBuffers.count == layerPlayers.count else { return false }
+
+            basePlayer.scheduleBuffer(baseBuffer, at: nil, options: .loops)
+            melodyPlayer.scheduleBuffer(melodyBuffer, at: nil, options: .loops)
+            for (index, player) in layerPlayers.enumerated() {
+                player.volume = 0
+                player.scheduleBuffer(layerBuffers[index], at: nil, options: .loops)
+            }
+
+            engine.prepare()
+            try engine.start()
+            basePlayer.play()
+            melodyPlayer.play()
+            layerPlayers.forEach { $0.play() }
+            activeWorld = world
+            beatAnchor = CACurrentMediaTime()
+            isOnline = false
+            return true
+        } catch {
+            stopNodes()
+            engine.stop()
+            activeWorld = nil
+            return false
+        }
     }
 
     func respondToColoring(
@@ -3067,45 +3238,89 @@ private final class AdaptiveMusicPlayer: NSObject, ObservableObject {
         profile: MindfulColorProfile,
         world: MusicWorld
     ) {
+        beginRecordingIfNeeded()
         activeWorld = world
         colorInfluence = min(max(profile.coloredFraction / 0.70, 0), 1)
-        let warmth = profile.warmProportion - profile.coolProportion
-        let brightness = profile.meanBrightness - 0.5
-        let saturation = profile.meanSaturation - 0.5
-        let colorDelta = colorInfluence * (
-            warmth * 0.018 + brightness * 0.024 + saturation * 0.012
-        )
-        let rate = min(max(Double(targetRate(for: world)) + colorDelta, 0.88), 1.04)
-        channels[world]?.player.rate = Float(rate)
-        fallbackPlayer?.rate = Float(rate)
+        resumeFromColoringActivity()
 
-        var hue: CGFloat = 0
-        var saturationValue: CGFloat = 0
-        var brightnessValue: CGFloat = 0
-        var alpha: CGFloat = 0
-        _ = color.getHue(
-            &hue,
-            saturation: &saturationValue,
-            brightness: &brightnessValue,
-            alpha: &alpha
-        )
-        fallbackPlayer?.pan = Float((hue * 2 - 1) * 0.12)
-        fallbackPlayer?.volume = min(
-            0.19,
-            0.08 + Float(saturationValue) * 0.05 + Float(regionFraction) * 0.18
-        )
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.58)
+        pendingColorTask?.cancel()
+        let delay = secondsUntilNextBeat(for: world)
+        pendingColorTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: UInt64(max(delay, 0) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self.applyColorProfile(profile, world: world)
+            self.playAccent(
+                color: color,
+                regionFraction: regionFraction,
+                profile: profile,
+                world: world
+            )
+        }
+        if ParentComfortRuntime.hapticsEnabled {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.58)
+        }
+    }
+
+    func finishRecording() -> (name: String, duration: TimeInterval)? {
+        recordingLock.lock()
+        let file = recordingFile
+        let name = recordingName
+        let frameCount = recordedFrameCount
+        let sampleRate = recordingSampleRate
+        recordingFile = nil
+        recordingName = nil
+        recordingLock.unlock()
+
+        guard file != nil,
+              let name,
+              frameCount > 0 else {
+            MusicSessionAudioStore.delete(name)
+            return nil
+        }
+        let duration = Double(frameCount) / max(sampleRate, 1)
+        recordingElapsed = duration
+        return (name, duration)
+    }
+
+    func discardRecording() {
+        recordingLock.lock()
+        let name = recordingName
+        recordingFile = nil
+        recordingName = nil
+        recordedFrameCount = 0
+        recordingLock.unlock()
+        MusicSessionAudioStore.delete(name)
+        recordingElapsed = 0
+        didReachRecordingLimit = false
+    }
+
+    func pauseForInterruption() {
+        wasPlayingBeforeInterruption = engine.isRunning
+        if engine.isRunning {
+            engine.pause()
+        }
+    }
+
+    func resumeAfterInterruption() {
+        guard wasPlayingBeforeInterruption, activeWorld != nil else { return }
+        do {
+            try configureAudioSession()
+            try engine.start()
+        } catch {
+            return
+        }
+        wasPlayingBeforeInterruption = false
     }
 
     func stop() {
-        meterTimer?.invalidate()
-        meterTimer = nil
-        fallbackPlayer?.stop()
-        fallbackPlayer = nil
-        for channel in channels.values {
-            channel.player.pause()
-            channel.player.volume = 0
-        }
+        pendingColorTask?.cancel()
+        inactivityTask?.cancel()
+        masterRampTask?.cancel()
+        layerRampTask?.cancel()
+        discardRecording()
+        stopNodes()
+        engine.stop()
         activeWorld = nil
         isOnline = false
         level = 0.12
@@ -3115,85 +3330,596 @@ private final class AdaptiveMusicPlayer: NSObject, ObservableObject {
         )
     }
 
-    private func remoteChannel(for world: MusicWorld) -> RemoteChannel? {
-        if let channel = channels[world] {
-            return channel
-        }
-        guard let streamURL = world.streamURL else { return nil }
-        let item = AVPlayerItem(url: streamURL)
-        item.audioTimePitchAlgorithm = .spectral
-        item.preferredForwardBufferDuration = 2
-        let player = AVQueuePlayer()
-        player.automaticallyWaitsToMinimizeStalling = false
-        player.volume = 0
-        let looper = AVPlayerLooper(player: player, templateItem: item)
-        let channel = RemoteChannel(player: player, looper: looper)
-        channels[world] = channel
-        return channel
-    }
-
-    private func makeFallbackPlayer(for world: MusicWorld) -> AVAudioPlayer? {
-        guard let url = Bundle.main.url(
-            forResource: world.fallbackResource,
-            withExtension: "wav"
-        ), let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
-        player.numberOfLoops = -1
-        player.volume = 0.38
-        player.enableRate = true
-        player.rate = targetRate(for: world)
-        player.isMeteringEnabled = true
-        player.prepareToPlay()
-        return player
-    }
-
-    private func startMetering() {
-        meterTimer?.invalidate()
-        let timer = Timer(
-            timeInterval: 1 / 24,
-            target: self,
-            selector: #selector(updateMeter),
-            userInfo: nil,
-            repeats: true
+    private var synthFormat: AVAudioFormat? {
+        AVAudioFormat(
+            standardFormatWithSampleRate: sampleRate,
+            channels: 2
         )
-        meterTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
     }
 
-    @objc private func updateMeter() {
-        let online = activeWorld.flatMap {
-            channels[$0]?.player.timeControlStatus
-        } == .playing
-        isOnline = online
-        let fallbackTarget: Float = online ? 0.09 : 0.38
-        if let fallback = fallbackPlayer {
-            fallback.volume += (fallbackTarget - fallback.volume) * 0.12
-            fallback.updateMeters()
-            let power = fallback.averagePower(forChannel: 0)
-            let amplitude = pow(10, CGFloat(power) / 20)
-            let remotePhase = activeWorld.flatMap {
-                channels[$0]?.player.currentTime().seconds
-            } ?? 0
-            let pulse = CGFloat((sin(remotePhase * 4.2) + 1) / 2) * (online ? 0.12 : 0.04)
-            level += (min(max(amplitude * 2.4 + pulse, 0.10), 1) - level) * 0.24
-        } else {
-            level = online ? 0.22 : 0.10
-        }
-    }
-
-    private func targetRate(for world: MusicWorld) -> Float {
+    private func baseRate(for world: MusicWorld) -> Float {
         switch world {
-        case .happy: Float(1.00 - colorInfluence * 0.05)
-        case .calm: 0.98
-        case .low: Float(0.93 + colorInfluence * 0.06)
-        case .angry: Float(1.02 - colorInfluence * 0.11)
-        case .tense: Float(1.00 - colorInfluence * 0.09)
+        case .happy: 1.08
+        case .calm: 0.94
+        case .low: 0.82
+        case .angry: 1.12
+        case .tense: 1.00
         }
     }
 
-    private func configureAudioSession() {
+    private func basePitch(for world: MusicWorld) -> Float {
+        switch world {
+        case .happy: 3.0
+        case .calm: 0
+        case .low: -4.0
+        case .angry: 2.0
+        case .tense: -1.0
+        }
+    }
+
+    private func baseVolume(for world: MusicWorld) -> Float {
+        switch world {
+        case .happy: 0.66
+        case .calm: 0.60
+        case .low: 0.56
+        case .angry: 0.64
+        case .tense: 0.58
+        }
+    }
+
+    private func baseFilterFrequency(for world: MusicWorld) -> Float {
+        switch world {
+        case .happy: 9_200
+        case .calm: 7_000
+        case .low: 4_800
+        case .angry: 10_200
+        case .tense: 6_200
+        }
+    }
+
+    private func baseReverbMix(for world: MusicWorld) -> Float {
+        switch world {
+        case .happy: 24
+        case .calm: 48
+        case .low: 58
+        case .angry: 20
+        case .tense: 42
+        }
+    }
+
+    private func configureAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-        try? session.setActive(true)
+        try session.setCategory(.playback, mode: .default)
+        try session.setActive(true)
+    }
+
+    private func loadBaseBuffer(for world: MusicWorld) -> AVAudioPCMBuffer? {
+        let url = Bundle.main.url(
+            forResource: world.fallbackResource,
+            withExtension: "mp3"
+        )
+        guard let url, let file = try? AVAudioFile(forReading: url) else { return nil }
+        let capacity = AVAudioFrameCount(file.length)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat,
+            frameCapacity: capacity
+        ) else { return nil }
+        do {
+            try file.read(into: buffer)
+            return buffer
+        } catch {
+            return nil
+        }
+    }
+
+    private func installOutputTapIfNeeded() throws {
+        guard !tapInstalled else { return }
+        let output = engine.mainMixerNode
+        let format = output.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw NSError(domain: "SproutlyMusic", code: 1)
+        }
+        tapFormat = format
+        output.installTap(
+            onBus: 0,
+            bufferSize: 2_048,
+            format: format
+        ) { [weak self] buffer, _ in
+            self?.processOutput(buffer)
+        }
+        tapInstalled = true
+    }
+
+    nonisolated private func processOutput(_ buffer: AVAudioPCMBuffer) {
+        recordingLock.lock()
+        if let recordingFile {
+            do {
+                try recordingFile.write(from: buffer)
+                recordedFrameCount += AVAudioFramePosition(buffer.frameLength)
+            } catch {
+                // 保留已成功写入的部分；失败的缓冲区不计入创作时长。
+            }
+        }
+        let frameCount = recordedFrameCount
+        let sampleRate = recordingSampleRate
+        let isRecording = recordingFile != nil
+        recordingLock.unlock()
+
+        let rms = rmsLevel(in: buffer)
+        let elapsed = Double(frameCount) / max(sampleRate, 1)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.level += (min(max(CGFloat(rms) * 5.4, 0.10), 1) - self.level) * 0.28
+            guard isRecording else { return }
+            self.recordingElapsed = elapsed
+            if elapsed >= self.maximumRecordingDuration {
+                self.didReachRecordingLimit = true
+            }
+        }
+    }
+
+    nonisolated private func rmsLevel(in buffer: AVAudioPCMBuffer) -> Float {
+        guard let channels = buffer.floatChannelData,
+              buffer.frameLength > 0 else { return 0.02 }
+        let count = Int(buffer.frameLength)
+        let strideSize = 8
+        var sum: Float = 0
+        var samples = 0
+        for frame in Swift.stride(from: 0, to: count, by: strideSize) {
+            let sample = channels[0][frame]
+            sum += sample * sample
+            samples += 1
+        }
+        return sqrt(sum / Float(max(samples, 1)))
+    }
+
+    private func beginRecordingIfNeeded() {
+        guard !hasActiveRecording,
+              let destination = MusicSessionAudioStore.makeRecordingURL(),
+              let format = tapFormat ?? synthFormat else { return }
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: format.sampleRate,
+            AVNumberOfChannelsKey: Int(format.channelCount),
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        do {
+            let file = try AVAudioFile(
+                forWriting: destination.url,
+                settings: settings,
+                commonFormat: format.commonFormat,
+                interleaved: format.isInterleaved
+            )
+            recordingLock.lock()
+            recordingFile = file
+            recordingName = destination.name
+            recordedFrameCount = 0
+            recordingSampleRate = format.sampleRate
+            recordingLock.unlock()
+            recordingElapsed = 0
+            didReachRecordingLimit = false
+        } catch {
+            MusicSessionAudioStore.delete(destination.name)
+        }
+    }
+
+    private func secondsUntilNextBeat(for world: MusicWorld) -> TimeInterval {
+        let beat = 60 / bpm(for: world)
+        let elapsed = max(0, CACurrentMediaTime() - beatAnchor)
+        let remainder = elapsed.truncatingRemainder(dividingBy: beat)
+        return remainder < 0.035 ? 0 : beat - remainder
+    }
+
+    private func bpm(for world: MusicWorld) -> Double {
+        switch world {
+        case .happy: 92
+        case .calm: 66
+        case .low: 58
+        case .angry: 100
+        case .tense: 72
+        }
+    }
+
+    private func resumeFromColoringActivity() {
+        inactivityTask?.cancel()
+        rampMasterVolume(to: ParentComfortRuntime.musicVolume, duration: 0.28)
+        inactivityTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.rampMasterVolume(
+                to: ParentComfortRuntime.musicVolume * 0.35,
+                duration: 1.1
+            )
+        }
+    }
+
+    private func rampMasterVolume(to target: Float, duration: TimeInterval) {
+        masterRampTask?.cancel()
+        let start = masterMixer.outputVolume
+        let steps = max(1, Int(duration * 30))
+        masterRampTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for step in 1...steps {
+                guard !Task.isCancelled else { return }
+                let progress = Float(step) / Float(steps)
+                let eased = 1 - pow(1 - progress, 3)
+                self.masterMixer.outputVolume = start + (target - start) * eased
+                try? await Task.sleep(nanoseconds: 33_000_000)
+            }
+        }
+    }
+
+    private func applyColorProfile(_ profile: MindfulColorProfile, world: MusicWorld) {
+        let weights = colorFamilyWeights(profile)
+        let influence = min(max(profile.coloredFraction / 0.70, 0), 1)
+        let targets = weights.map { weight -> Float in
+            guard weight > 0.005 else { return 0 }
+            // 填色后颜色声部成为主角，背景音乐退到更低的层次。
+            return Float(0.10 + sqrt(weight) * (0.28 + influence * 0.38))
+        }
+        rampLayerVolumes(to: targets)
+
+        let warmth = profile.warmProportion - profile.coolProportion
+        let brightness = profile.meanBrightness - 0.5
+        let saturation = profile.meanSaturation - 0.5
+        let rateDelta = influence * (
+            warmth * 0.035 + brightness * 0.045 + saturation * 0.020
+        )
+        baseTimePitch.rate = Float(
+            min(max(Double(baseRate(for: world)) + rateDelta, 0.78), 1.16)
+        )
+        basePlayer.volume = max(
+            0.20,
+            baseVolume(for: world) - Float(influence) * 0.34
+        )
+        melodyPlayer.volume = 0
+        baseTimePitch.pitch = basePitch(for: world) + Float(
+            (warmth * 0.70 + brightness * 0.35) * influence
+        )
+        let filterFrequency = Double(baseFilterFrequency(for: world))
+            + profile.meanBrightness * 2_800
+            + profile.meanSaturation * 900
+        equalizer.bands[0].frequency = Float(filterFrequency)
+        let reverbTarget = Double(baseReverbMix(for: world))
+            + weights[2] * 10
+            + weights[3] * 14
+            + profile.hueDiversity * 7
+        reverb.wetDryMix = Float(min(max(reverbTarget, 18), 72))
+    }
+
+    private func rampLayerVolumes(to targets: [Float]) {
+        layerRampTask?.cancel()
+        let starts = layerPlayers.map(\.volume)
+        layerRampTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for step in 1...12 {
+                guard !Task.isCancelled else { return }
+                let progress = Float(step) / 12
+                let eased = 1 - pow(1 - progress, 3)
+                for index in self.layerPlayers.indices {
+                    let target = targets.indices.contains(index) ? targets[index] : 0
+                    self.layerPlayers[index].volume = starts[index] + (target - starts[index]) * eased
+                }
+                try? await Task.sleep(nanoseconds: 25_000_000)
+            }
+        }
+    }
+
+    private func colorFamilyWeights(_ profile: MindfulColorProfile) -> [Double] {
+        guard profile.coloredPixels > 0 else { return Array(repeating: 0, count: 5) }
+        var result = Array(repeating: 0.0, count: 5)
+        for (index, pixels) in profile.hueBins.enumerated() {
+            let hue = (Double(index) + 0.5) / Double(max(profile.hueBins.count, 1))
+            let family: Int
+            switch hue {
+            case 0..<0.18, 0.96...1: family = 0
+            case 0.18..<0.53: family = 1
+            case 0.53..<0.68: family = 2
+            case 0.68..<0.82: family = 3
+            default: family = 4
+            }
+            result[family] += pixels / profile.coloredPixels
+        }
+        return result
+    }
+
+    private func playAccent(
+        color: UIColor,
+        regionFraction: CGFloat,
+        profile: MindfulColorProfile,
+        world: MusicWorld
+    ) {
+        guard engine.isRunning,
+              let buffer = makeAccentBuffer(
+                color: color,
+                regionFraction: regionFraction,
+                profile: profile,
+                world: world
+              ) else { return }
+        let voice = accentPlayers[nextAccentVoice]
+        nextAccentVoice = (nextAccentVoice + 1) % accentPlayers.count
+        voice.stop()
+        voice.volume = 0.70
+        voice.scheduleBuffer(buffer)
+        voice.play()
+    }
+
+    /// 基础音不再只是持续铺底：用与情绪对应的音阶生成一条很轻的八小节旋律。
+    /// 旋律独立于填色声部，因此进入页面后就有完整的音乐动机，填色后仍可叠加变化。
+    private func makeMelodyBuffer(for world: MusicWorld) -> AVAudioPCMBuffer? {
+        guard let format = synthFormat else { return nil }
+        let beatDuration = 60 / bpm(for: world)
+        let notePattern: [Int]
+        switch world {
+        case .happy:
+            notePattern = [0, 1, 2, 1, 0, 2, 3, 2, 0, 1, 2, 4, 3, 2, 1, 0]
+        case .calm:
+            notePattern = [0, 1, 2, 1, 0, 1, 3, 1, 0, 2, 3, 2, 1, 0, 1, 0]
+        case .low:
+            notePattern = [0, 1, 2, 1, 0, 2, 3, 2, 3, 2, 1, 0, 0, 1, 2, 1]
+        case .angry:
+            notePattern = [0, 0, 2, 3, 2, 1, 0, 1, 3, 2, 1, 0, 2, 1, 0, 0]
+        case .tense:
+            notePattern = [0, 1, 3, 2, 4, 2, 1, 0, 0, 2, 3, 1, 4, 3, 2, 0]
+        }
+
+        let duration = beatDuration * Double(notePattern.count)
+        let capacity = AVAudioFrameCount(sampleRate * duration)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: capacity
+        ), let channels = buffer.floatChannelData else { return nil }
+        buffer.frameLength = capacity
+
+        let musical = musicalIdentity(for: world)
+        let amplitude: Double
+        let chordPattern: [Int]
+        switch world {
+        case .happy:
+            amplitude = 0.18
+            chordPattern = [0, 3, 4, 0]
+        case .calm:
+            amplitude = 0.15
+            chordPattern = [0, 3, 1, 0]
+        case .low:
+            amplitude = 0.13
+            chordPattern = [0, 2, 3, 0]
+        case .angry:
+            amplitude = 0.16
+            chordPattern = [0, 2, 3, 2]
+        case .tense:
+            amplitude = 0.15
+            chordPattern = [0, 1, 3, 0]
+        }
+        let twoPi = Double.pi * 2
+
+        for frame in 0..<Int(capacity) {
+            let time = Double(frame) / sampleRate
+            let noteIndex = min(Int(time / beatDuration), notePattern.count - 1)
+            let noteTime = time.truncatingRemainder(dividingBy: beatDuration)
+            let noteDuration = beatDuration * 0.82
+            var value = 0.0
+            if noteTime < noteDuration {
+                let degreeIndex = notePattern[noteIndex] % musical.intervals.count
+                let frequency = musical.root * pow(
+                    2,
+                    Double(musical.intervals[degreeIndex]) / 12
+                )
+                let attack = min(1, noteTime / 0.055)
+                let release = pow(max(0, 1 - noteTime / noteDuration), 1.7)
+                let envelope = attack * release
+                let vibrato = 1 + sin(twoPi * 5.1 * time) * 0.003
+                // 轻微的基频、泛音和尾音，听起来更接近柔和的钢琴/木琴，而不是单调正弦波。
+                let tone = sin(twoPi * frequency * vibrato * time) * 0.78
+                    + sin(twoPi * frequency * 2 * vibrato * time) * 0.16
+                    + sin(twoPi * frequency * 3 * vibrato * time) * 0.06
+                value += tone * envelope * amplitude
+            }
+
+            // 每四拍换一个和弦，给旋律一个干净、可循环的器乐底。
+            let barDuration = beatDuration * 4
+            let barIndex = min(Int(time / barDuration), chordPattern.count - 1)
+            let barTime = time.truncatingRemainder(dividingBy: barDuration)
+            let chordRoot = chordPattern[barIndex] % musical.intervals.count
+            let chordDegrees = [
+                chordRoot,
+                (chordRoot + 2) % musical.intervals.count,
+                (chordRoot + 4) % musical.intervals.count
+            ]
+            let padEnvelope = min(1, barTime / 0.28)
+                * pow(max(0, 1 - barTime / barDuration), 0.55)
+            for (index, degree) in chordDegrees.enumerated() {
+                let chordFrequency = musical.root * 0.5 * pow(
+                    2,
+                    Double(musical.intervals[degree]) / 12
+                )
+                let partial = sin(twoPi * chordFrequency * time)
+                    + sin(twoPi * chordFrequency * 2 * time) * 0.18
+                value += partial * padEnvelope * (0.020 - Double(index) * 0.003)
+            }
+
+            channels[0][frame] = Float(value * 0.98)
+            channels[1][frame] = Float(value)
+        }
+        return buffer
+    }
+
+    private func makeLayerBuffer(family: Int, world: MusicWorld) -> AVAudioPCMBuffer? {
+        guard let format = synthFormat else { return nil }
+        let beatDuration = 60 / bpm(for: world)
+        let duration = beatDuration * 4
+        let capacity = AVAudioFrameCount(sampleRate * duration)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: capacity
+        ), let channels = buffer.floatChannelData else { return nil }
+        buffer.frameLength = capacity
+
+        let musical = musicalIdentity(for: world)
+        let patterns = [
+            [0, 2, 4, 2],
+            [0, 1, 3, 1],
+            [0, 2, 1, 3],
+            [1, 3, 4, 2],
+            [0, 4, 2, 3]
+        ]
+        let transpositions = [12, 0, -12, 7, 0]
+        let pattern = patterns[family]
+        let pan = Double(family - 2) * 0.10
+        let leftGain = sqrt((1 - pan) * 0.5)
+        let rightGain = sqrt((1 + pan) * 0.5)
+
+        for frame in 0..<Int(capacity) {
+            let time = Double(frame) / sampleRate
+            let beatIndex = min(Int(time / beatDuration), pattern.count - 1)
+            let noteTime = time.truncatingRemainder(dividingBy: beatDuration)
+            let degree = musical.intervals[pattern[beatIndex] % musical.intervals.count]
+                + transpositions[family]
+            let frequency = musical.root * pow(2, Double(degree) / 12)
+            let value = layerSample(
+                family: family,
+                frequency: frequency,
+                time: time,
+                noteTime: noteTime,
+                beatDuration: beatDuration
+            ) * 0.15
+            channels[0][frame] = Float(value * leftGain)
+            channels[1][frame] = Float(value * rightGain)
+        }
+        return buffer
+    }
+
+    private func layerSample(
+        family: Int,
+        frequency: Double,
+        time: Double,
+        noteTime: Double,
+        beatDuration: Double
+    ) -> Double {
+        let twoPi = Double.pi * 2
+        let attack = min(1, noteTime / 0.035)
+        let release = pow(max(0, 1 - noteTime / beatDuration), family == 2 ? 0.65 : 1.7)
+        let envelope = attack * release
+        let fundamental = sin(twoPi * frequency * time)
+        switch family {
+        case 0:
+            return envelope * (
+                fundamental
+                    + sin(twoPi * frequency * 2.01 * time) * 0.32
+                    + sin(twoPi * frequency * 3.97 * time) * 0.14
+            ) * exp(-noteTime * 1.15)
+        case 1:
+            return envelope * (
+                fundamental * 0.76
+                    + sin(twoPi * frequency * 2 * time) * 0.17
+                    + sin(twoPi * 1.2 * time) * 0.04
+            )
+        case 2:
+            return envelope * (
+                fundamental * 0.82
+                    + sin(twoPi * frequency * 0.5 * time) * 0.12
+                    + sin(twoPi * frequency * 1.5 * time) * 0.08
+            )
+        case 3:
+            return envelope * (
+                fundamental * 0.68
+                    + sin(twoPi * frequency * 1.5 * time) * 0.20
+                    + sin(twoPi * frequency * 2.5 * time) * 0.09
+            )
+        default:
+            return envelope * exp(-noteTime * 1.6) * (
+                fundamental
+                    + sin(twoPi * frequency * 2 * time) * 0.24
+                    + sin(twoPi * frequency * 3 * time) * 0.08
+            )
+        }
+    }
+
+    private func makeAccentBuffer(
+        color: UIColor,
+        regionFraction: CGFloat,
+        profile: MindfulColorProfile,
+        world: MusicWorld
+    ) -> AVAudioPCMBuffer? {
+        guard let format = synthFormat else { return nil }
+        var hue: CGFloat = 0
+        var saturation: CGFloat = 0
+        var brightness: CGFloat = 0
+        var alpha: CGFloat = 0
+        _ = color.getHue(
+            &hue,
+            saturation: &saturation,
+            brightness: &brightness,
+            alpha: &alpha
+        )
+        let musical = musicalIdentity(for: world)
+        let degree = min(
+            Int(Double(hue) * Double(musical.intervals.count)),
+            musical.intervals.count - 1
+        )
+        let octave = regionFraction < 0.04 ? 12 : (regionFraction > 0.18 ? -12 : 0)
+        let frequency = musical.root * pow(
+            2,
+            Double(musical.intervals[degree] + octave) / 12
+        )
+        let duration = 1.0 + Double(sqrt(max(regionFraction, 0.005))) * 1.8
+        let capacity = AVAudioFrameCount(sampleRate * duration)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: capacity
+        ), let channels = buffer.floatChannelData else { return nil }
+        buffer.frameLength = capacity
+        let family = familyIndex(for: Double(hue))
+        let pan = (Double(hue) * 2 - 1) * 0.16
+        let leftGain = sqrt((1 - pan) * 0.5)
+        let rightGain = sqrt((1 + pan) * 0.5)
+        for frame in 0..<Int(capacity) {
+            let time = Double(frame) / sampleRate
+            let attack = min(1, time / 0.025)
+            let release = pow(max(0, 1 - time / duration), 2.1)
+            let timbre = layerSample(
+                family: family,
+                frequency: frequency,
+                time: time,
+                noteTime: time,
+                beatDuration: duration
+            )
+            let diversity = 0.82 + profile.hueDiversity * 0.18
+            let value = tanh(timbre * diversity) * attack * release * 0.20
+            channels[0][frame] = Float(value * leftGain)
+            channels[1][frame] = Float(value * rightGain)
+        }
+        return buffer
+    }
+
+    private func familyIndex(for hue: Double) -> Int {
+        switch hue {
+        case 0..<0.18, 0.96...1: 0
+        case 0.18..<0.53: 1
+        case 0.53..<0.68: 2
+        case 0.68..<0.82: 3
+        default: 4
+        }
+    }
+
+    private func musicalIdentity(for world: MusicWorld) -> (root: Double, intervals: [Int]) {
+        switch world {
+        case .happy: (261.63, [0, 4, 7, 9, 12])
+        case .calm: (220.00, [0, 2, 7, 9, 12])
+        case .low: (196.00, [0, 3, 5, 7, 10])
+        case .angry: (146.83, [0, 3, 5, 7, 10])
+        case .tense: (246.94, [0, 2, 5, 7, 11])
+        }
+    }
+
+    private func stopNodes() {
+        basePlayer.stop()
+        melodyPlayer.stop()
+        layerPlayers.forEach { $0.stop() }
+        accentPlayers.forEach { $0.stop() }
     }
 }
 
@@ -3619,16 +4345,16 @@ private enum MusicColorDraftStore {
 
     static func load(
         artworkCount: Int
-    ) -> (selectedArtworkIndex: Int, assignments: [[UInt8: UIColor]]) {
+    ) -> (selectedArtworkIndex: Int, assignments: [[UInt16: UIColor]]) {
         guard let data = UserDefaults.standard.data(forKey: key),
               let draft = try? JSONDecoder().decode(CodableMusicDraft.self, from: data) else {
             return (0, Array(repeating: [:], count: artworkCount))
         }
 
-        var restored = Array(repeating: [UInt8: UIColor](), count: artworkCount)
+        var restored = Array(repeating: [UInt16: UIColor](), count: artworkCount)
         for index in 0..<min(artworkCount, draft.assignments.count) {
             for (key, color) in draft.assignments[index] {
-                guard let region = UInt8(key) else { continue }
+                guard let region = UInt16(key) else { continue }
                 restored[index][region] = color.uiColor
             }
         }
@@ -3637,7 +4363,7 @@ private enum MusicColorDraftStore {
 
     static func save(
         selectedArtworkIndex: Int,
-        assignments: [[UInt8: UIColor]]
+        assignments: [[UInt16: UIColor]]
     ) {
         let encoded = assignments.map { artwork in
             Dictionary(uniqueKeysWithValues: artwork.map {
@@ -3678,6 +4404,13 @@ enum MusicFaceSnapshotStore {
     static func delete(_ name: String) {
         try? FileManager.default.removeItem(
             at: snapshotsDirectory.appendingPathComponent(name)
+        )
+    }
+
+    static func load(_ name: String?) -> UIImage? {
+        guard let name else { return nil }
+        return UIImage(
+            contentsOfFile: snapshotsDirectory.appendingPathComponent(name).path
         )
     }
 

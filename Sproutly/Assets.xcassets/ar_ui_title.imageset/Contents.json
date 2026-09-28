@@ -1,0 +1,7 @@
+{
+  "images" : [
+    { "filename" : "ar_ui_title.svg", "idiom" : "universal" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 },
+  "properties" : { "preserves-vector-representation" : true }
+}

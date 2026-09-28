@@ -15,17 +15,28 @@
 		A10000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* Assets.xcassets */; };
 		A10000000000000000000009 /* PreviewCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* PreviewCatalog.swift */; };
 		A10000000000000000000011 /* FigmaBaseScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* FigmaBaseScreens.swift */; };
-		A10000000000000000000012 /* LiveARView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* LiveARView.swift */; };
 		A10000000000000000000013 /* ZQKNNY-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* ZQKNNY-Medium.ttf */; };
 		A10000000000000000000014 /* ZQKNNY-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* ZQKNNY-Bold.ttf */; };
-		A10000000000000000000015 /* ar_peach.usdz in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* ar_peach.usdz */; };
-		A10000000000000000000016 /* ar_lotus.usdz in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* ar_lotus.usdz */; };
 		A10000000000000000000017 /* SproutlyMusicFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* SproutlyMusicFlow.swift */; };
-		A10000000000000000000018 /* music_fallback_happy.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000019 /* music_fallback_happy.wav */; };
-		A10000000000000000000019 /* music_fallback_calm.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* music_fallback_calm.wav */; };
-		A10000000000000000000020 /* music_fallback_low.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000021 /* music_fallback_low.wav */; };
-		A10000000000000000000021 /* music_fallback_angry.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000022 /* music_fallback_angry.wav */; };
-		A10000000000000000000022 /* music_fallback_tense.wav in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000023 /* music_fallback_tense.wav */; };
+		A10000000000000000000023 /* SproutlyARFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000024 /* SproutlyARFlowView.swift */; };
+		A10000000000000000000024 /* FlowerTicketFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000025 /* FlowerTicketFlow.swift */; };
+		A10000000000000000000025 /* SproutlyProfileFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000026 /* SproutlyProfileFlow.swift */; };
+		A10000000000000000000026 /* EmotionMusicCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000027 /* EmotionMusicCard.swift */; };
+		A10000000000000000000027 /* HomeGlobeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000028 /* HomeGlobeView.swift */; };
+		A10000000000000000000030 /* GrowthRecordsFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000030 /* GrowthRecordsFlow.swift */; };
+		A10000000000000000000031 /* ParentCenterFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000031 /* ParentCenterFlow.swift */; };
+		A10000000000000000000032 /* music_base_classical_vibes_2.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000032 /* music_base_classical_vibes_2.mp3 */; };
+		A10000000000000000000033 /* music_home_video_happy.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000033 /* music_home_video_happy.mp4 */; };
+		A10000000000000000000034 /* music_home_video_tense.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000034 /* music_home_video_tense.mp4 */; };
+		A10000000000000000000035 /* music_home_video_angry.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000035 /* music_home_video_angry.mp4 */; };
+		A10000000000000000000036 /* music_home_video_calm.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000036 /* music_home_video_calm.mp4 */; };
+		A10000000000000000000037 /* music_home_video_low.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000037 /* music_home_video_low.mp4 */; };
+		A10000000000000000000038 /* ar_emotion_happy.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000038 /* ar_emotion_happy.mp3 */; };
+		A10000000000000000000039 /* ar_emotion_sad.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000039 /* ar_emotion_sad.mp3 */; };
+		A10000000000000000000040 /* ar_emotion_angry.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000040 /* ar_emotion_angry.mp3 */; };
+		A10000000000000000000041 /* ar_emotion_afraid.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000041 /* ar_emotion_afraid.mp3 */; };
+		A10000000000000000000042 /* ar_emotion_calm.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000042 /* ar_emotion_calm.mp3 */; };
+		A10000000000000000000044 /* SproutlyHomeGlobe.usdz in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000044 /* SproutlyHomeGlobe.usdz */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,18 +49,29 @@
 		B10000000000000000000008 /* Sproutly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sproutly.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B10000000000000000000009 /* PreviewCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewCatalog.swift; sourceTree = "<group>"; };
 		B10000000000000000000011 /* FigmaBaseScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FigmaBaseScreens.swift; sourceTree = "<group>"; };
-		B10000000000000000000012 /* LiveARView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveARView.swift; sourceTree = "<group>"; };
 		B10000000000000000000013 /* ZQKNNY-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "ZQKNNY-Medium.ttf"; sourceTree = "<group>"; };
 		B10000000000000000000014 /* ZQKNNY-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "ZQKNNY-Bold.ttf"; sourceTree = "<group>"; };
 		B10000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		B10000000000000000000016 /* ar_peach.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = ar_peach.usdz; sourceTree = "<group>"; };
-		B10000000000000000000017 /* ar_lotus.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = ar_lotus.usdz; sourceTree = "<group>"; };
 		B10000000000000000000018 /* SproutlyMusicFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SproutlyMusicFlow.swift; sourceTree = "<group>"; };
-		B10000000000000000000019 /* music_fallback_happy.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_happy.wav; sourceTree = "<group>"; };
-		B10000000000000000000020 /* music_fallback_calm.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_calm.wav; sourceTree = "<group>"; };
-		B10000000000000000000021 /* music_fallback_low.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_low.wav; sourceTree = "<group>"; };
-		B10000000000000000000022 /* music_fallback_angry.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_angry.wav; sourceTree = "<group>"; };
-		B10000000000000000000023 /* music_fallback_tense.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = music_fallback_tense.wav; sourceTree = "<group>"; };
+		B10000000000000000000024 /* SproutlyARFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SproutlyARFlowView.swift; sourceTree = "<group>"; };
+		B10000000000000000000025 /* FlowerTicketFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowerTicketFlow.swift; sourceTree = "<group>"; };
+		B10000000000000000000026 /* SproutlyProfileFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SproutlyProfileFlow.swift; sourceTree = "<group>"; };
+		B10000000000000000000027 /* EmotionMusicCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmotionMusicCard.swift; sourceTree = "<group>"; };
+		B10000000000000000000028 /* HomeGlobeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeGlobeView.swift; sourceTree = "<group>"; };
+		B10000000000000000000030 /* GrowthRecordsFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthRecordsFlow.swift; sourceTree = "<group>"; };
+		B10000000000000000000031 /* ParentCenterFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParentCenterFlow.swift; sourceTree = "<group>"; };
+		B10000000000000000000032 /* music_base_classical_vibes_2.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = music_base_classical_vibes_2.mp3; sourceTree = "<group>"; };
+		B10000000000000000000033 /* music_home_video_happy.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = music_home_video_happy.mp4; sourceTree = "<group>"; };
+		B10000000000000000000034 /* music_home_video_tense.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = music_home_video_tense.mp4; sourceTree = "<group>"; };
+		B10000000000000000000035 /* music_home_video_angry.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = music_home_video_angry.mp4; sourceTree = "<group>"; };
+		B10000000000000000000036 /* music_home_video_calm.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = music_home_video_calm.mp4; sourceTree = "<group>"; };
+		B10000000000000000000037 /* music_home_video_low.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = music_home_video_low.mp4; sourceTree = "<group>"; };
+		B10000000000000000000038 /* ar_emotion_happy.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ar_emotion_happy.mp3; sourceTree = "<group>"; };
+		B10000000000000000000039 /* ar_emotion_sad.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ar_emotion_sad.mp3; sourceTree = "<group>"; };
+		B10000000000000000000040 /* ar_emotion_angry.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ar_emotion_angry.mp3; sourceTree = "<group>"; };
+		B10000000000000000000041 /* ar_emotion_afraid.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ar_emotion_afraid.mp3; sourceTree = "<group>"; };
+		B10000000000000000000042 /* ar_emotion_calm.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ar_emotion_calm.mp3; sourceTree = "<group>"; };
+		B10000000000000000000044 /* SproutlyHomeGlobe.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = SproutlyHomeGlobe.usdz; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,13 +101,20 @@
 				B10000000000000000000003 /* Theme.swift */,
 				B10000000000000000000004 /* RootView.swift */,
 				B10000000000000000000005 /* GardenHomeView.swift */,
+				B10000000000000000000028 /* HomeGlobeView.swift */,
 				B10000000000000000000011 /* FigmaBaseScreens.swift */,
 				B10000000000000000000018 /* SproutlyMusicFlow.swift */,
-				B10000000000000000000012 /* LiveARView.swift */,
+				B10000000000000000000024 /* SproutlyARFlowView.swift */,
+				B10000000000000000000025 /* FlowerTicketFlow.swift */,
+				B10000000000000000000026 /* SproutlyProfileFlow.swift */,
+				B10000000000000000000030 /* GrowthRecordsFlow.swift */,
+				B10000000000000000000031 /* ParentCenterFlow.swift */,
+				B10000000000000000000027 /* EmotionMusicCard.swift */,
 				B10000000000000000000009 /* PreviewCatalog.swift */,
 				B10000000000000000000015 /* Info.plist */,
 				C10000000000000000000004 /* Fonts */,
-				C10000000000000000000005 /* ARModels */,
+				C10000000000000000000007 /* HomeModels */,
+				C10000000000000000000008 /* MusicBackgrounds */,
 				C10000000000000000000006 /* Audio */,
 				B10000000000000000000007 /* Assets.xcassets */,
 			);
@@ -109,25 +138,37 @@
 			path = Fonts;
 			sourceTree = "<group>";
 		};
-		C10000000000000000000005 /* ARModels */ = {
-			isa = PBXGroup;
-			children = (
-				B10000000000000000000016 /* ar_peach.usdz */,
-				B10000000000000000000017 /* ar_lotus.usdz */,
-			);
-			path = ARModels;
-			sourceTree = "<group>";
-		};
 		C10000000000000000000006 /* Audio */ = {
 			isa = PBXGroup;
 			children = (
-				B10000000000000000000019 /* music_fallback_happy.wav */,
-				B10000000000000000000020 /* music_fallback_calm.wav */,
-				B10000000000000000000021 /* music_fallback_low.wav */,
-				B10000000000000000000022 /* music_fallback_angry.wav */,
-				B10000000000000000000023 /* music_fallback_tense.wav */,
+				B10000000000000000000032 /* music_base_classical_vibes_2.mp3 */,
+				B10000000000000000000038 /* ar_emotion_happy.mp3 */,
+				B10000000000000000000039 /* ar_emotion_sad.mp3 */,
+				B10000000000000000000040 /* ar_emotion_angry.mp3 */,
+				B10000000000000000000041 /* ar_emotion_afraid.mp3 */,
+				B10000000000000000000042 /* ar_emotion_calm.mp3 */,
 			);
 			path = Audio;
+			sourceTree = "<group>";
+		};
+		C10000000000000000000007 /* HomeModels */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000044 /* SproutlyHomeGlobe.usdz */,
+			);
+			path = HomeModels;
+			sourceTree = "<group>";
+		};
+		C10000000000000000000008 /* MusicBackgrounds */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000033 /* music_home_video_happy.mp4 */,
+				B10000000000000000000034 /* music_home_video_tense.mp4 */,
+				B10000000000000000000035 /* music_home_video_angry.mp4 */,
+				B10000000000000000000036 /* music_home_video_calm.mp4 */,
+				B10000000000000000000037 /* music_home_video_low.mp4 */,
+			);
+			path = MusicBackgrounds;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -192,13 +233,18 @@
 				A10000000000000000000007 /* Assets.xcassets in Resources */,
 				A10000000000000000000013 /* ZQKNNY-Medium.ttf in Resources */,
 				A10000000000000000000014 /* ZQKNNY-Bold.ttf in Resources */,
-				A10000000000000000000015 /* ar_peach.usdz in Resources */,
-				A10000000000000000000016 /* ar_lotus.usdz in Resources */,
-				A10000000000000000000018 /* music_fallback_happy.wav in Resources */,
-				A10000000000000000000019 /* music_fallback_calm.wav in Resources */,
-				A10000000000000000000020 /* music_fallback_low.wav in Resources */,
-				A10000000000000000000021 /* music_fallback_angry.wav in Resources */,
-				A10000000000000000000022 /* music_fallback_tense.wav in Resources */,
+				A10000000000000000000032 /* music_base_classical_vibes_2.mp3 in Resources */,
+				A10000000000000000000044 /* SproutlyHomeGlobe.usdz in Resources */,
+				A10000000000000000000033 /* music_home_video_happy.mp4 in Resources */,
+				A10000000000000000000034 /* music_home_video_tense.mp4 in Resources */,
+				A10000000000000000000035 /* music_home_video_angry.mp4 in Resources */,
+				A10000000000000000000036 /* music_home_video_calm.mp4 in Resources */,
+				A10000000000000000000037 /* music_home_video_low.mp4 in Resources */,
+				A10000000000000000000038 /* ar_emotion_happy.mp3 in Resources */,
+				A10000000000000000000039 /* ar_emotion_sad.mp3 in Resources */,
+				A10000000000000000000040 /* ar_emotion_angry.mp3 in Resources */,
+				A10000000000000000000041 /* ar_emotion_afraid.mp3 in Resources */,
+				A10000000000000000000042 /* ar_emotion_calm.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -214,9 +260,15 @@
 				A10000000000000000000003 /* Theme.swift in Sources */,
 				A10000000000000000000004 /* RootView.swift in Sources */,
 				A10000000000000000000005 /* GardenHomeView.swift in Sources */,
+				A10000000000000000000027 /* HomeGlobeView.swift in Sources */,
 				A10000000000000000000011 /* FigmaBaseScreens.swift in Sources */,
 				A10000000000000000000017 /* SproutlyMusicFlow.swift in Sources */,
-				A10000000000000000000012 /* LiveARView.swift in Sources */,
+				A10000000000000000000023 /* SproutlyARFlowView.swift in Sources */,
+				A10000000000000000000024 /* FlowerTicketFlow.swift in Sources */,
+				A10000000000000000000025 /* SproutlyProfileFlow.swift in Sources */,
+				A10000000000000000000030 /* GrowthRecordsFlow.swift in Sources */,
+				A10000000000000000000031 /* ParentCenterFlow.swift in Sources */,
+				A10000000000000000000026 /* EmotionMusicCard.swift in Sources */,
 				A10000000000000000000009 /* PreviewCatalog.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
