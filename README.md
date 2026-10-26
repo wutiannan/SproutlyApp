@@ -1,5 +1,18 @@
 # 灵想（Sproutly）
 
+## 演示视频
+
+<div align="center">
+  <video
+    src="https://res.cloudinary.com/bbk6pkob/video/upload/v1793016321/lingxiang_demo_video.mp4"
+    width="800"
+    controls
+    playsinline
+    preload="metadata">
+    <a href="https://res.cloudinary.com/bbk6pkob/video/upload/v1793016321/lingxiang_demo_video.mp4">播放灵想演示视频</a>
+  </video>
+</div>
+
 ## 打开方式
 
 1. 使用 Xcode 16 或更新版本，双击 `Sproutly.xcodeproj`。
