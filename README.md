@@ -3,14 +3,10 @@
 ## 演示视频
 
 <div align="center">
-  <video
-    src="https://res.cloudinary.com/bbk6pkob/video/upload/v1793016321/lingxiang_demo_video.mp4"
-    width="800"
-    controls
-    playsinline
-    preload="metadata">
-    <a href="https://res.cloudinary.com/bbk6pkob/video/upload/v1793016321/lingxiang_demo_video.mp4">播放灵想演示视频</a>
-  </video>
+  <a href="https://res.cloudinary.com/bbk6pkob/video/upload/v1793016321/lingxiang_demo_video.mp4">
+    <img src="https://res.cloudinary.com/bbk6pkob/video/upload/so_0,w_1280,c_limit/v1793016321/lingxiang_demo_video.jpg" alt="灵想演示视频封面" width="800">
+  </a>
+  <p><em>点击封面播放完整演示视频</em></p>
 </div>
 
 ## 打开方式
